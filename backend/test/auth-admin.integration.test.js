@@ -178,6 +178,46 @@ test('多用户鉴权、管理员配置与模型密钥服务端解析', { timeou
   assert.equal(publicModels.data.textModels[0].apiKey, '__nova_server__');
   assert.equal(JSON.stringify(publicModels.data).includes('sk-server-secret'), false);
 
+  // 批量导入：新增、跳过已存在、拒绝缺用途的条目
+  const importPayload = {
+    models: [
+      { upstreamId: 'gpt-image-1', name: 'GPT Image 1', useType: 'image', protocol: 'openai' },
+      { upstreamId: 'gpt-4o-mini', name: 'Mock Chat', useType: 'text', protocol: 'openai-chat-completions' },
+      { upstreamId: 'text-embedding-3-small', name: 'Embedding', useType: 'text' },
+      { upstreamId: 'missing-use-type' },
+    ],
+    skipExisting: true,
+  };
+  const imported = await request(baseUrl, `/api/nova/admin/providers/${provider.data.provider.id}/import-models`, {
+    method: 'POST',
+    cookie: adminCookie,
+    body: importPayload,
+  });
+  assert.equal(imported.response.status, 200, JSON.stringify(imported.data));
+  assert.equal(imported.data.imported.length, 2);
+  assert.equal(imported.data.skipped, 1);
+  assert.equal(imported.data.failed.length, 1);
+
+  const importedAgain = await request(baseUrl, `/api/nova/admin/providers/${provider.data.provider.id}/import-models`, {
+    method: 'POST',
+    cookie: adminCookie,
+    body: importPayload,
+  });
+  assert.equal(importedAgain.response.status, 200, JSON.stringify(importedAgain.data));
+  assert.equal(importedAgain.data.imported.length, 0);
+  assert.equal(importedAgain.data.skipped, 3);
+  assert.equal(importedAgain.data.failed.length, 1);
+
+  const importedWithUpdate = await request(baseUrl, `/api/nova/admin/providers/${provider.data.provider.id}/import-models`, {
+    method: 'POST',
+    cookie: adminCookie,
+    body: { ...importPayload, skipExisting: false },
+  });
+  assert.equal(importedWithUpdate.response.status, 200, JSON.stringify(importedWithUpdate.data));
+  assert.equal(importedWithUpdate.data.imported.length, 0);
+  assert.equal(importedWithUpdate.data.updated.length, 3);
+  assert.equal(importedWithUpdate.data.failed.length, 1);
+
   // 创建普通用户并登录
   const createdUser = await request(baseUrl, '/api/nova/admin/users', {
     method: 'POST',

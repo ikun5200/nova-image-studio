@@ -1315,6 +1315,23 @@ async function handleAdminApi(req, res, apiPathname, searchParams, admin) {
     return true;
   }
 
+  const providerImportMatch = apiPathname.match(/^\/api\/nova\/admin\/providers\/([^/]+)\/import-models$/);
+  if (req.method === 'POST' && providerImportMatch) {
+    const providerId = decodeURIComponent(providerImportMatch[1]);
+    const body = await readJsonBody(req);
+    const result = userSystem.importModels(providerId, body?.models, {
+      skipExisting: body?.skipExisting !== false,
+    });
+    userSystem.audit(admin, 'provider.import_models', providerId, {
+      imported: result.imported.length,
+      updated: result.updated.length,
+      skipped: result.skipped,
+      failed: result.failed.length,
+    });
+    sendJson(res, 200, result);
+    return true;
+  }
+
   const providerMatch = apiPathname.match(/^\/api\/nova\/admin\/providers\/([^/]+)(?:\/(test))?$/);
   if (providerMatch) {
     const providerId = decodeURIComponent(providerMatch[1]);

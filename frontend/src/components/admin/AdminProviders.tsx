@@ -34,6 +34,7 @@ import {
   deleteProvider,
   fetchModels,
   fetchProviders,
+  importProviderModels,
   saveDefaults,
   testProvider,
   updateModel,
@@ -176,6 +177,23 @@ function inferPreset(kind: string, upstreamId: string): string {
   return 'gpt-image-2';
 }
 
+type InferredModelUse = 'image' | 'text' | 'video' | 'skip';
+
+/**
+ * 从上游模型 ID 猜用途。只是省去手动勾选，导入后仍可逐个改。
+ * 视频模型不进入图片/文本模型表，提示用户用视频插件接入。
+ */
+function inferModelUse(upstreamId: string, providerKind: string): InferredModelUse {
+  const id = String(upstreamId || '').toLowerCase();
+  if (/embedding|embed-|tts|whisper|transcri|moderation|rerank/.test(id)) return 'skip';
+  if (/(^|[-_.])video|veo|sora|kling|hailuo|seedance|runway|pika|luma|^wan2(?!.*image)/.test(id)) return 'video';
+  if (/image|imagen|dall-e|dalle|flux|sdxl|stable-diffusion|seedream|grok-imagine|qwen-image|wan2.*image|gpt-image|midjourney|^mj-/.test(id)) {
+    return 'image';
+  }
+  if (providerKind === 'anthropic-messages') return 'text';
+  return 'text';
+}
+
 function providerKindLabel(kind: string): string {
   return PROVIDER_KINDS.find(option => option.value === kind)?.label || kind;
 }
@@ -210,10 +228,14 @@ export function AdminProviders() {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{
     providerId: string;
-    models: Array<{ id: string; name: string }>;
-    selected: Record<string, boolean>;
-    useType: 'image' | 'text';
+    models: Array<{
+      id: string;
+      name: string;
+      useType: InferredModelUse;
+      selected: boolean;
+    }>;
   } | null>(null);
+  const [skipExisting, setSkipExisting] = useState(true);
   const [importing, setImporting] = useState(false);
 
   const load = useCallback(async () => {
@@ -283,15 +305,21 @@ export function AdminProviders() {
         enabled: providerForm.enabled,
       };
       if (providerForm.apiKey.trim()) payload.apiKey = providerForm.apiKey.trim();
+      let createdProvider: ProviderRecord | null = null;
       if (editingProvider) {
         await updateProvider(editingProvider.id, payload);
       } else {
-        const created = await createProvider(payload);
-        setSelectedProviderId(created.id);
+        createdProvider = await createProvider(payload);
+        setSelectedProviderId(createdProvider.id);
       }
       setProviderDialogOpen(false);
       await load();
-      setNotice('供应商已保存');
+      if (createdProvider) {
+        setNotice('供应商已保存，正在自动拉取模型列表…');
+        void handleTestProvider(createdProvider);
+      } else {
+        setNotice('供应商已保存');
+      }
     } catch (err) {
       setProviderFormError(err instanceof Error ? err.message : '保存失败');
     } finally {
@@ -318,15 +346,18 @@ export function AdminProviders() {
     setTestResult(null);
     try {
       const result = await testProvider(provider.id);
-      const selected: Record<string, boolean> = {};
-      for (const model of result.models) selected[model.id] = false;
-      setTestResult({
-        providerId: provider.id,
-        models: result.models,
-        selected,
-        useType: provider.kind === 'google' || provider.kind === 'anthropic-messages' ? 'text' : 'image',
+      const rows = result.models.map(model => {
+        const useType = inferModelUse(model.id, provider.kind);
+        return {
+          ...model,
+          useType,
+          // 图片/文本默认勾选，视频和不支持的模型默认不导入。
+          selected: useType === 'image' || useType === 'text',
+        };
       });
-      setNotice(`上游返回 ${result.count} 个模型`);
+      setTestResult({ providerId: provider.id, models: rows });
+      const importable = rows.filter(row => row.useType === 'image' || row.useType === 'text').length;
+      setNotice(`上游返回 ${rows.length} 个模型，已自动识别 ${importable} 个可导入模型`);
     } catch (err) {
       setError(err instanceof Error ? err.message : '连接测试失败');
     } finally {
@@ -334,39 +365,59 @@ export function AdminProviders() {
     }
   };
 
-  const handleImportSelected = async () => {
+  const handleImportRows = async (rows: Array<{
+    id: string;
+    name: string;
+    useType: InferredModelUse;
+  }>) => {
     if (!testResult) return;
     const provider = providers?.find(item => item.id === testResult.providerId);
     if (!provider) return;
-    const chosen = testResult.models.filter(model => testResult.selected[model.id]);
-    if (chosen.length === 0) {
-      setError('请先勾选要导入的模型');
+    const importable = rows.filter(row => row.useType === 'image' || row.useType === 'text');
+    if (importable.length === 0) {
+      setError('没有可导入的图片/文本模型');
       return;
     }
     setImporting(true);
     setError(null);
-    const failures: string[] = [];
-    for (const item of chosen) {
-      try {
-        await createModel({
-          providerId: provider.id,
-          name: item.name || item.id,
-          upstreamId: item.id,
-          useType: testResult.useType,
-          protocol: inferProtocol(provider.kind, testResult.useType),
+    try {
+      const result = await importProviderModels(
+        provider.id,
+        importable.map(row => ({
+          upstreamId: row.id,
+          name: row.name || row.id,
+          useType: row.useType as 'image' | 'text',
+          protocol: inferProtocol(provider.kind, row.useType as 'image' | 'text'),
           // 交给后端按协议推断能力默认值，避免把 OpenAI 的 14 张参考图套到 Grok 等模型上。
           capabilities: {},
-        });
-      } catch (err) {
-        failures.push(`${item.id}: ${err instanceof Error ? err.message : '失败'}`);
+        })),
+        skipExisting,
+      );
+      await load();
+      setTestResult(null);
+      const parts = [`新增 ${result.imported.length}`];
+      if (result.updated.length > 0) parts.push(`更新 ${result.updated.length}`);
+      if (result.skipped > 0) parts.push(`跳过 ${result.skipped}`);
+      if (result.failed.length > 0) parts.push(`失败 ${result.failed.length}`);
+      setNotice(`导入完成：${parts.join('，')}`);
+      if (result.failed.length > 0) {
+        setError(result.failed.slice(0, 3).map(item => `${item.upstreamId}: ${item.error}`).join('；'));
       }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '导入失败');
+    } finally {
+      setImporting(false);
     }
-    setImporting(false);
-    await load();
-    setTestResult(null);
-    setNotice(failures.length === 0
-      ? `已导入 ${chosen.length} 个模型`
-      : `导入完成，${failures.length} 个失败：${failures.slice(0, 3).join('；')}`);
+  };
+
+  const handleImportSelected = () => {
+    if (!testResult) return;
+    void handleImportRows(testResult.models.filter(model => model.selected));
+  };
+
+  const handleImportAll = () => {
+    if (!testResult) return;
+    void handleImportRows(testResult.models);
   };
 
   const openCreateModel = () => {
@@ -536,7 +587,7 @@ export function AdminProviders() {
                   <div className="flex flex-wrap items-center gap-1.5">
                     <Button variant="outline" size="sm" onClick={() => void handleTestProvider(selectedProvider)} disabled={testing}>
                       <RefreshCw className={cn('size-3.5', testing && 'animate-spin')} />
-                      {testing ? '测试中…' : '测试连接'}
+                      {testing ? '拉取中…' : '拉取模型列表'}
                     </Button>
                     <Button variant="outline" size="sm" onClick={() => openEditProvider(selectedProvider)}>
                       <Pencil className="size-3.5" />
@@ -552,42 +603,104 @@ export function AdminProviders() {
 
               {testResult && testResult.providerId === selectedProvider.id && (
                 <div className="rounded-xl border border-border bg-card p-4">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
                       <p className="text-sm font-medium">上游模型列表（{testResult.models.length}）</p>
-                      <p className="mt-0.5 text-[11px] text-muted-foreground">勾选后可按统一用途导入，导入后可再单独调整能力参数。</p>
+                      <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">
+                        已按模型名自动识别用途，可直接「一键导入全部」。视频模型请用视频插件接入，嵌入 / TTS 等模型不会导入。
+                      </p>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <Select
-                        value={testResult.useType}
-                        onValueChange={value => setTestResult(prev => prev ? { ...prev, useType: value as 'image' | 'text' } : prev)}
-                        options={[{ value: 'image', label: '导入为图片模型' }, { value: 'text', label: '导入为文本模型' }]}
-                        className="w-40"
+                    <div className="flex flex-wrap items-center gap-2">
+                      <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                        <input
+                          type="checkbox"
+                          checked={skipExisting}
+                          onChange={event => setSkipExisting(event.target.checked)}
+                          className="size-3.5 accent-primary"
+                        />
+                        仅导入新模型
+                      </label>
+                      <Button
+                        variant="outline"
                         size="sm"
-                      />
-                      <Button size="sm" onClick={() => void handleImportSelected()} disabled={importing}>
+                        onClick={() => setTestResult(prev => prev ? {
+                          ...prev,
+                          models: prev.models.map(model => ({
+                            ...model,
+                            selected: model.useType === 'image' || model.useType === 'text',
+                          })),
+                        } : prev)}
+                      >
+                        全选可导入
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setTestResult(prev => prev ? {
+                          ...prev,
+                          models: prev.models.map(model => ({ ...model, selected: false })),
+                        } : prev)}
+                      >
+                        全不选
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={handleImportSelected} disabled={importing}>
+                        导入所选
+                      </Button>
+                      <Button size="sm" onClick={() => void handleImportAll()} disabled={importing}>
                         <Download className="size-3.5" />
-                        {importing ? '导入中…' : '导入所选'}
+                        {importing ? '导入中…' : '一键导入全部'}
                       </Button>
                     </div>
                   </div>
-                  <div className="mt-3 max-h-64 overflow-y-auto rounded-lg border border-border">
+                  <div className="mt-3 max-h-72 overflow-y-auto rounded-lg border border-border">
                     {testResult.models.length === 0 && <p className="p-3 text-xs text-muted-foreground">上游没有返回模型。</p>}
-                    {testResult.models.map(model => (
-                      <label key={model.id} className="flex cursor-pointer items-center gap-2 border-b border-border px-3 py-1.5 last:border-b-0 hover:bg-muted/30">
-                        <input
-                          type="checkbox"
-                          checked={Boolean(testResult.selected[model.id])}
-                          onChange={event => setTestResult(prev => prev ? {
-                            ...prev,
-                            selected: { ...prev.selected, [model.id]: event.target.checked },
-                          } : prev)}
-                          className="size-3.5 accent-primary"
-                        />
-                        <span className="min-w-0 flex-1 truncate font-mono text-[11px]">{model.id}</span>
-                        <span className="truncate text-[10px] text-muted-foreground">{model.name !== model.id ? model.name : ''}</span>
-                      </label>
-                    ))}
+                    {testResult.models.map(model => {
+                      const supported = model.useType === 'image' || model.useType === 'text';
+                      return (
+                        <div
+                          key={model.id}
+                          className="flex items-center gap-2 border-b border-border px-3 py-1.5 last:border-b-0 hover:bg-muted/30"
+                        >
+                          <input
+                            type="checkbox"
+                            disabled={!supported}
+                            checked={model.selected}
+                            onChange={event => setTestResult(prev => prev ? {
+                              ...prev,
+                              models: prev.models.map(item => item.id === model.id
+                                ? { ...item, selected: event.target.checked }
+                                : item),
+                            } : prev)}
+                            className="size-3.5 accent-primary disabled:opacity-40"
+                          />
+                          <span className="min-w-0 flex-1 truncate font-mono text-[11px]">{model.id}</span>
+                          <span className="hidden max-w-[180px] truncate text-[10px] text-muted-foreground sm:block">
+                            {model.name !== model.id ? model.name : ''}
+                          </span>
+                          <Select
+                            value={model.useType}
+                            onValueChange={value => setTestResult(prev => prev ? {
+                              ...prev,
+                              models: prev.models.map(item => item.id === model.id
+                                ? {
+                                  ...item,
+                                  useType: value as InferredModelUse,
+                                  selected: value === 'image' || value === 'text',
+                                }
+                                : item),
+                            } : prev)}
+                            options={[
+                              { value: 'image', label: '图片' },
+                              { value: 'text', label: '文本' },
+                              { value: 'video', label: '视频（需插件）' },
+                              { value: 'skip', label: '不支持' },
+                            ]}
+                            className="w-32"
+                            size="sm"
+                          />
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -602,7 +715,7 @@ export function AdminProviders() {
                 </div>
                 {providerModels.length === 0 ? (
                   <div className="p-4">
-                    <EmptyState icon={ImageIcon} title="还没有模型" description="手动添加，或先测试连接再批量导入。" action={<Button size="sm" onClick={openCreateModel}>添加模型</Button>} />
+                    <EmptyState icon={ImageIcon} title="还没有模型" description="点击上方「拉取模型列表」自动识别并导入，或手动添加。" action={<Button size="sm" onClick={openCreateModel}>添加模型</Button>} />
                   </div>
                 ) : (
                   <div className="overflow-x-auto">

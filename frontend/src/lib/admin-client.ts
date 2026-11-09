@@ -224,6 +224,33 @@ export async function deleteModel(id: string): Promise<void> {
   await adminRequest(`/models/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 
+export interface ImportModelInput {
+  upstreamId: string;
+  name?: string;
+  useType: 'image' | 'text';
+  protocol?: string;
+  capabilities?: Record<string, unknown>;
+}
+
+export interface ImportModelsResult {
+  imported: ModelRecord[];
+  updated: ModelRecord[];
+  skipped: number;
+  failed: Array<{ upstreamId: string; error: string }>;
+  total: number;
+}
+
+export async function importProviderModels(
+  providerId: string,
+  models: ImportModelInput[],
+  skipExisting = true,
+): Promise<ImportModelsResult> {
+  return adminRequest(`/providers/${encodeURIComponent(providerId)}/import-models`, {
+    method: 'POST',
+    body: JSON.stringify({ models, skipExisting }),
+  });
+}
+
 export async function fetchDefaults(): Promise<DefaultModels> {
   const data = await adminRequest<{ defaults: DefaultModels }>('/defaults');
   return data.defaults;

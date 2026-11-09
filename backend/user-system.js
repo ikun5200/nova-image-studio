@@ -994,6 +994,90 @@ function createUserSystem({ db, dataDir }) {
     return { ok: true };
   }
 
+  /**
+   * 批量导入上游模型。
+   *
+   * 前端从上游 /models 拉到列表后，按推断出的用途调用这里。
+   * skipExisting=true 时只新增；false 时同名同用途的模型会更新名称/协议/能力。
+   */
+  function importModels(providerId, models, { skipExisting = true } = {}) {
+    const provider = getProviderRow(providerId);
+    if (!provider) throw new UserSystemError(404, 'PROVIDER_NOT_FOUND', '供应商不存在');
+    if (!Array.isArray(models)) throw new UserSystemError(400, 'INVALID_MODELS', 'models 必须是数组');
+
+    const imported = [];
+    const updated = [];
+    const failed = [];
+    let skipped = 0;
+    const now = nowIso();
+    const findExisting = db.prepare(
+      'SELECT * FROM models WHERE provider_id = ? AND upstream_id = ? AND use_type = ?',
+    );
+    const insert = db.prepare(`
+      INSERT INTO models (id, provider_id, name, upstream_id, use_type, protocol, capabilities_json, enabled, sort_order, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const update = db.prepare(`
+      UPDATE models SET name = ?, protocol = ?, capabilities_json = ?, updated_at = ? WHERE id = ?
+    `);
+
+    const tx = db.transaction(() => {
+      for (const raw of models) {
+        const upstreamId = String(raw?.upstreamId || '').trim();
+        const useType = raw?.useType === 'image' || raw?.useType === 'text' ? raw.useType : '';
+        if (!upstreamId || !useType) {
+          failed.push({ upstreamId, error: '缺少上游模型 ID 或用途' });
+          continue;
+        }
+        try {
+          const normalized = normalizeModelPayload({ ...raw, upstreamId, useType }, provider);
+          const existing = findExisting.get(provider.id, normalized.upstreamId, normalized.useType);
+          if (existing) {
+            if (skipExisting) {
+              skipped += 1;
+              continue;
+            }
+            update.run(
+              normalized.name,
+              normalized.protocol,
+              JSON.stringify(normalized.capabilities),
+              now,
+              existing.id,
+            );
+            updated.push(serializeModel(getModelRow(existing.id), { provider: serializeProvider(provider) }));
+            continue;
+          }
+          const id = `model_${randomBytes(8).toString('hex')}`;
+          insert.run(
+            id,
+            provider.id,
+            normalized.name,
+            normalized.upstreamId,
+            normalized.useType,
+            normalized.protocol,
+            JSON.stringify(normalized.capabilities),
+            raw?.enabled === false ? 0 : 1,
+            clampInt(raw?.sortOrder, -10000, 10000, 0),
+            now,
+            now,
+          );
+          imported.push(serializeModel(getModelRow(id), { provider: serializeProvider(provider) }));
+        } catch (error) {
+          failed.push({ upstreamId, error: error?.message || '导入失败' });
+        }
+      }
+    });
+    tx();
+
+    return {
+      imported,
+      updated,
+      skipped,
+      failed,
+      total: models.length,
+    };
+  }
+
   function resolveModel(modelConfigId, expectedUse) {
     const row = getModelRow(modelConfigId);
     if (!row) throw new UserSystemError(404, 'MODEL_NOT_FOUND', '模型不存在或已被删除');
@@ -1496,6 +1580,7 @@ function createUserSystem({ db, dataDir }) {
     createModel,
     updateModel,
     deleteModel,
+    importModels,
     resolveModel,
     resolveDefaults,
     updateModelDefaults,
