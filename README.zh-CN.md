@@ -256,6 +256,11 @@ nova-image-studio/
 
 ## 🚀 部署指南
 
+> **预构建镜像**：`ghcr.io/ikun5200/nova-image-studio:latest`（linux/amd64）
+>
+> 飞牛 NAS / 群晖等直接使用 Docker Compose 的部署模板见 [`deploy/nas/`](deploy/nas/)，
+> 把 `docker-compose.yml` 与 `.env` 放到 `/vol1/1000/生图站` 后 `docker compose up -d` 即可。
+
 <details>
 <summary><strong>🐳 Docker Compose 部署</strong></summary>
 

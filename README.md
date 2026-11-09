@@ -289,6 +289,10 @@ CDP only binds `127.0.0.1` and only reads tabs you opened.
 
 ## 🚀 Deployment
 
+> **Prebuilt image**: `ghcr.io/ikun5200/nova-image-studio:latest` (linux/amd64)
+>
+> Ready-to-use Docker Compose templates for NAS devices are in [`deploy/nas/`](deploy/nas/).
+
 <details>
 <summary><strong>🐳 Docker Compose</strong></summary>
 
