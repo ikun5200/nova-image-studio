@@ -3,6 +3,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import Script from "next/script";
 import { ServiceWorkerManager } from "@/components/ServiceWorkerManager";
+import { BootLoaderCleanup } from "@/components/BootLoaderCleanup";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -79,6 +80,7 @@ export default function RootLayout({
           </svg>
         </div>
         <TooltipProvider>
+          <BootLoaderCleanup />
           <ServiceWorkerManager />
           <ErrorBoundary>
             <main>
