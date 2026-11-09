@@ -2,6 +2,10 @@ FROM node:22-slim AS frontend-builder
 
 WORKDIR /app
 
+# 构建机上统一走官方 npm registry；lockfile 里个别 npmmirror 地址会被替换掉。
+ENV NPM_CONFIG_REGISTRY=https://registry.npmjs.org \
+    NPM_CONFIG_REPLACE_REGISTRY_HOST=always
+
 COPY package.json package-lock.json ./
 COPY frontend/package.json frontend/package-lock.json ./frontend/
 COPY frontend/ ./frontend/
@@ -11,6 +15,9 @@ RUN cd frontend && npm ci && npm run build
 FROM node:22-slim AS backend-deps
 
 WORKDIR /app/backend
+
+ENV NPM_CONFIG_REGISTRY=https://registry.npmjs.org \
+    NPM_CONFIG_REPLACE_REGISTRY_HOST=always
 
 # better-sqlite3 需要在安装阶段使用 python3、make、g++
 RUN apt-get update \
