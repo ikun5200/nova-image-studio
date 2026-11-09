@@ -1,6 +1,6 @@
 'use client';
 
-import { Copy, Download, ImagePlus, Maximize2, Settings, Wand2, X, Shuffle, User, Wallpaper, RefreshCw } from 'lucide-react';
+import { Copy, Download, ImagePlus, Maximize2, Settings, Shield, Wand2, X, Shuffle, User, Wallpaper, RefreshCw } from 'lucide-react';
 import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo, useId, forwardRef, useImperativeHandle } from 'react';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -14,6 +14,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { runImageAction, type ImageActionPayload } from '@/lib/image-actions';
+import { useOptionalSession } from '@/lib/session-context';
 
 import { BA_RANDOM_URL, BING_WALLPAPER_URL } from '@/lib/constants';
 import { useBodyScrollLock } from '@/lib/scroll-lock';
@@ -46,6 +47,8 @@ export const WorkspaceHeader = forwardRef<WorkspaceHeaderRef, WorkspaceHeaderPro
   const [imageApiUrl, setImageApiUrl] = useState('');
   const [viewerPayload, setViewerPayload] = useState<ImageActionPayload | null>(null);
   const viewerObjectUrlRef = useRef<string | null>(null);
+  const session = useOptionalSession();
+  const isAdmin = session?.user.role === 'admin';
 
   useBodyScrollLock(viewerOpen);
 
@@ -189,6 +192,19 @@ export const WorkspaceHeader = forwardRef<WorkspaceHeaderRef, WorkspaceHeaderPro
             </DropdownMenu>
             <ThemeToggle />
             <WideModeToggle enabled={wideMode} onToggle={onToggleWideMode} />
+            {isAdmin && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => { window.location.href = '/admin/'; }}
+                className="gap-0 px-2 sm:gap-2 sm:px-2.5"
+                title="管理后台"
+                aria-label="管理后台"
+              >
+                <Shield className="w-4 h-4" />
+                <span className="hidden sm:inline">管理后台</span>
+              </Button>
+            )}
             <Button variant="outline" size="sm" onClick={onOpenSettings} className="gap-0 px-2 sm:gap-2 sm:px-2.5" title="设置" aria-label="设置">
               <Settings className="w-4 h-4" />
               <span className="hidden sm:inline">设置</span>

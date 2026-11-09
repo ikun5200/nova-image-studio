@@ -13,6 +13,7 @@ import {
   Save,
   Settings,
   Upload,
+  UserRound,
   XCircle,
 } from 'lucide-react';
 import {
@@ -25,6 +26,8 @@ import {
 } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { PluginsSettings } from '@/components/settings/PluginsSettings';
+import { ServerModelsSettings } from '@/components/settings/ServerModelsSettings';
+import { AccountSettings } from '@/components/settings/AccountSettings';
 import { Button } from '@/components/ui/button';
 import { Select } from '@/components/ui/select';
 import { BackupProgress } from '@/components/BackupProgress';
@@ -50,9 +53,10 @@ import { checkModelsAvailability, type ModelStatus } from '@/lib/ccode-task-clie
 import { hasAnyApiKey } from '@/lib/settings-storage';
 import { BA_RANDOM_URL, BING_WALLPAPER_URL } from '@/lib/constants';
 import { PROMPT_DATA_SOURCES, getPromptSourceLabel } from '@/lib/prompt-gallery-data';
+import { isServerMode } from '@/lib/deploy-mode';
 
 /** 设置弹层的页签。调用方可以指定打开时落在哪一页。 */
-export type SettingsTab = 'models' | 'plugins' | 'backup' | 'about';
+export type SettingsTab = 'models' | 'plugins' | 'account' | 'backup' | 'about';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -114,6 +118,7 @@ function normalizeDefaults(
 }
 
 export function SettingsModal({ isOpen, onClose, onApiKeyChange, initialTab = 'models' }: SettingsModalProps) {
+  const serverMode = isServerMode();
   const [tab, setTab] = useState<SettingsTab>(initialTab);
   // 每次打开都回到调用方指定的那一页：从「插件凭据未配置」的提示条点进来要直达插件页。
   // 用「渲染期按 prop 变化调整 state」而不是 effect，避免先渲染出模型页再跳一帧。
@@ -312,7 +317,11 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange, initialTab = 'm
             <Settings className="w-5 h-5 text-muted-foreground" />
             <DialogTitle>设置</DialogTitle>
           </div>
-          <DialogDescription>一个供应商一把 Key。拉取或添加模型后配置为文本或图片模型。至少配置一个文本模型和一个图片模型后，外部功能才会解锁。</DialogDescription>
+          <DialogDescription>
+            {serverMode
+              ? '模型与 API Key 由部署管理员统一配置。你可以为各工作流设置只影响本机的个人默认模型。'
+              : '一个供应商一把 Key。拉取或添加模型后配置为文本或图片模型。至少配置一个文本模型和一个图片模型后，外部功能才会解锁。'}
+          </DialogDescription>
         </DialogHeader>
 
         <Tabs value={tab} onValueChange={value => setTab(value as SettingsTab)} className="min-h-0 flex-1 gap-0">
@@ -325,6 +334,10 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange, initialTab = 'm
               <Package className="w-4 h-4" />
               插件
             </TabsTrigger>
+            <TabsTrigger value="account" className="gap-2 rounded-none border-b-2 border-transparent data-active:border-primary data-active:bg-transparent data-active:shadow-none px-4 py-3">
+              <UserRound className="w-4 h-4" />
+              账号
+            </TabsTrigger>
             <TabsTrigger value="backup" className="gap-2 rounded-none border-b-2 border-transparent data-active:border-primary data-active:bg-transparent data-active:shadow-none px-4 py-3">
               <Database className="w-4 h-4" />
               备份
@@ -336,6 +349,8 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange, initialTab = 'm
           </TabsList>
 
           <TabsContent value="models" className="min-h-0 overflow-y-auto p-4 sm:p-6 mt-0 space-y-6">
+            {serverMode ? <ServerModelsSettings /> : (
+            <>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="space-y-1">
                 <p className="text-sm font-medium">供应商配置</p>
@@ -435,10 +450,16 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange, initialTab = 'm
                 </div>
               )}
             </div>
+            </>
+            )}
           </TabsContent>
 
           <TabsContent value="plugins" className="min-h-0 overflow-y-auto p-4 sm:p-6 space-y-6 mt-0">
             <PluginsSettings />
+          </TabsContent>
+
+          <TabsContent value="account" className="min-h-0 overflow-y-auto p-4 sm:p-6 space-y-6 mt-0">
+            <AccountSettings />
           </TabsContent>
 
           <TabsContent value="backup" className="min-h-0 overflow-y-auto p-4 sm:p-6 space-y-6 mt-0">

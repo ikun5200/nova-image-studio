@@ -35,7 +35,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Shuffle, Settings, User, Wallpaper, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { Shuffle, Settings, Shield, User, Wallpaper, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { useOptionalSession } from '@/lib/session-context';
 import { getNovaTask } from '@/lib/ccode-task-client';
 import { finalizeCompletedServerTask } from '@/lib/workspace-task-service';
 import { classifyTaskFailure } from '@/lib/task-failure';
@@ -53,6 +54,8 @@ import { getActiveAgentSessionId, setActiveAgentSessionId } from '@/lib/agent-se
 import { setAgentSession } from '@/lib/agent-context-store';
 
 export function WorkspaceShell() {
+  const session = useOptionalSession();
+  const announcement = session?.settings.announcement?.trim() || '';
   const queueStatus = useQueueStatus();
   const { wideMode, toggleWideMode } = useWideMode();
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -264,6 +267,12 @@ export function WorkspaceShell() {
         !wideMode && activeTab === 'agent' && 'h-dvh min-h-0 overflow-hidden'
       )}
     >
+      {announcement && (
+        <div className="rounded-xl border border-primary/20 bg-primary/5 px-4 py-2.5 text-xs leading-relaxed text-foreground">
+          <span className="mr-1.5 font-semibold text-primary">公告</span>
+          {announcement}
+        </div>
+      )}
       <div className={cn(
         'flex-1 bg-transparent shadow-none sm:rounded-3xl sm:bg-card/95 sm:shadow-sm sm:border sm:border-border/70',
         wideMode && 'flex min-h-0 flex-col',
@@ -357,6 +366,17 @@ export function WorkspaceShell() {
                       <Settings className="size-4 shrink-0" />
                       设置
                     </Button>
+                    {session?.user.role === 'admin' && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="w-full justify-start gap-2 rounded-xl px-3 text-xs"
+                        onClick={() => { window.location.href = '/admin/'; }}
+                      >
+                        <Shield className="size-4 shrink-0" />
+                        管理后台
+                      </Button>
+                    )}
                   </div>
 
                   <div className="flex flex-col gap-1">

@@ -360,6 +360,7 @@ export async function submitTextToImage(
     try {
       const serverTaskId = await createNovaTask({
         apiKey,
+        modelConfigId: provider.modelConfigId,
         baseUrl: provider.baseUrl,
         protocol: provider.protocol,
         mode: 'text-to-image',
@@ -434,6 +435,7 @@ export async function submitImageToImage(
   try {
     const serverTaskId = await createNovaTask({
       apiKey,
+      modelConfigId: provider.modelConfigId,
       baseUrl: provider.baseUrl,
       protocol: provider.protocol,
       mode: 'image-to-image',

@@ -20,14 +20,18 @@
 
 Nova Studio 是一个面向个人/团队的 AI 视频/图像生成工作台。前端使用 Next.js 16 + React 19 静态导出（PWA），后端是轻量 Node.js 服务（`server.js` + SQLite + WebSocket），统一调度任务并代理图像生成 API。
 
-**开源版特性：**
-- 支持分别配置图片模型与文本模型，模型级独立保存 API Key 与 Base URL
-- 用户自定义模型列表和 API 端点，后端按协议路由并透传已配置参数
-- 所有配置存储在浏览器 localStorage
+**核心特性：**
+- **两种部署模式**：服务器多用户模式（管理员统一配置模型与 Key）或本地单用户 BYOK 模式
+- **管理员后台**：用户/角色/配额、供应商与模型、默认模型、插件凭据、任务、用量统计、站点设置、操作审计
+- **密钥安全**：供应商与插件 API Key 使用 AES-256-GCM 加密落库，永不下发到浏览器
+- **多用户隔离**：任务、图片、WebSocket 订阅按用户归属；普通用户无法访问他人任务
+- 支持分别配置图片模型与文本模型，模型级独立协议、Base URL 与能力参数
 - 文字模型支持 Google（generateContent）和 OpenAI（Response 协议）
 - **视频生成完全插件化**：本体不内置任何视频上游协议，能力由插件包提供
 
-> 当前版本：**v3.4.0**
+> 当前版本：**v3.4.0**（服务器多用户版）
+>
+> 服务器部署与管理员后台完整说明见 **[docs/server-admin.md](docs/server-admin.md)**。
 
 ## 📚 文档
 
@@ -35,6 +39,7 @@ Nova Studio 是一个面向个人/团队的 AI 视频/图像生成工作台。�
 
 | 我想… | 去这里 |
 | --- | --- |
+| **服务器多用户部署 / 管理员后台** | **[docs/server-admin.md](docs/server-admin.md)** |
 | **开发一个视频插件** | **[docs/plugins/](docs/plugins/)** ← 从这里开始 |
 | 拿现成的插件来装 | [nova-studio-plugins](https://github.com/tianjiangqiji/nova-studio-plugins)（官方合集 + 插件模板） |
 | 10 分钟做出第一个能跑的插件 | [docs/plugins/quickstart.md](docs/plugins/quickstart.md) |

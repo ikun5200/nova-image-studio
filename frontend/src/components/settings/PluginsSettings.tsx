@@ -85,7 +85,7 @@ export function PluginsSettings() {
 
       <div className="space-y-3">
         {registry.plugins.map(plugin => (
-          <PluginCard key={plugin.id} plugin={plugin} />
+          <PluginCard key={plugin.id} plugin={plugin} allowByok={registry.allowByok} />
         ))}
       </div>
 
@@ -110,7 +110,7 @@ export function PluginsSettings() {
   );
 }
 
-function PluginCard({ plugin }: { plugin: InstalledPlugin }) {
+function PluginCard({ plugin, allowByok }: { plugin: InstalledPlugin; allowByok: boolean }) {
   const credentialVersion = useSyncExternalStore(
     subscribePluginCredentials,
     getCredentialVersion,
@@ -124,6 +124,8 @@ function PluginCard({ plugin }: { plugin: InstalledPlugin }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- credentialVersion 是外部 store 的变更信号
     [plugin, credentialVersion],
   );
+  const serverManaged = Boolean(plugin.credentialConfigured);
+  const ready = serverManaged || credential.apiKey.length > 0;
 
   return (
     <div className="space-y-3 rounded-xl border border-border bg-card/60 p-3.5">
@@ -133,15 +135,19 @@ function PluginCard({ plugin }: { plugin: InstalledPlugin }) {
             <span
               className={cn(
                 'inline-flex size-2 rounded-full',
-                credential.apiKey ? 'bg-emerald-500' : 'bg-amber-500',
+                ready ? 'bg-emerald-500' : 'bg-amber-500',
               )}
               aria-hidden
             />
             {plugin.name}
             <span className="font-mono text-[11px] font-normal text-muted-foreground">v{plugin.version}</span>
-            {!credential.apiKey && (
+            {serverManaged ? (
+              <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] text-emerald-700 dark:text-emerald-400">
+                管理员已配置
+              </span>
+            ) : !ready && (
               <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] text-amber-700 dark:text-amber-400">
-                待填写凭据
+                {allowByok ? '待填写凭据' : '未配置凭据'}
               </span>
             )}
           </p>
@@ -164,45 +170,57 @@ function PluginCard({ plugin }: { plugin: InstalledPlugin }) {
         </div>
       </div>
 
-      <div className="grid gap-2 sm:grid-cols-2">
-        <label className="space-y-1">
-          <span className="text-[11px] font-medium text-foreground">{plugin.credential.label}</span>
-          <span className="relative block">
-            <Input
-              type={showKey ? 'text' : 'password'}
-              value={credential.apiKey}
-              placeholder="填写后即可在视频工作台提交任务"
-              autoComplete="off"
-              onChange={event => setPluginCredential(plugin.id, { apiKey: event.target.value })}
-              className="h-8 rounded-xl pr-8 text-xs"
-            />
-            <button
-              type="button"
-              onClick={() => setShowKey(prev => !prev)}
-              aria-label={showKey ? '隐藏密钥' : '显示密钥'}
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-            >
-              {showKey ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
-            </button>
-          </span>
-        </label>
+      {serverManaged ? (
+        <div className="rounded-lg border border-border bg-muted/30 px-3 py-2.5 text-[11px] leading-relaxed text-muted-foreground">
+          凭据由管理员在服务器端统一配置，所有用户共享；密钥不会下发到浏览器。
+        </div>
+      ) : allowByok ? (
+        <>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <label className="space-y-1">
+              <span className="text-[11px] font-medium text-foreground">{plugin.credential.label}</span>
+              <span className="relative block">
+                <Input
+                  type={showKey ? 'text' : 'password'}
+                  value={credential.apiKey}
+                  placeholder="填写后即可在视频工作台提交任务"
+                  autoComplete="off"
+                  onChange={event => setPluginCredential(plugin.id, { apiKey: event.target.value })}
+                  className="h-8 rounded-xl pr-8 text-xs"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowKey(prev => !prev)}
+                  aria-label={showKey ? '隐藏密钥' : '显示密钥'}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                >
+                  {showKey ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+                </button>
+              </span>
+            </label>
 
-        <label className="space-y-1">
-          <span className="text-[11px] font-medium text-foreground">API 基地址</span>
-          <Input
-            type="text"
-            value={credential.baseUrl}
-            placeholder={plugin.credential.defaultBaseUrl || 'https://...'}
-            onChange={event => setPluginCredential(plugin.id, { baseUrl: event.target.value })}
-            className="h-8 rounded-xl text-xs"
-          />
-        </label>
-      </div>
+            <label className="space-y-1">
+              <span className="text-[11px] font-medium text-foreground">API 基地址</span>
+              <Input
+                type="text"
+                value={credential.baseUrl}
+                placeholder={plugin.credential.defaultBaseUrl || 'https://...'}
+                onChange={event => setPluginCredential(plugin.id, { baseUrl: event.target.value })}
+                className="h-8 rounded-xl text-xs"
+              />
+            </label>
+          </div>
 
-      <p className="text-[11px] leading-relaxed text-muted-foreground">
-        凭据只保存在当前浏览器，不会写入服务器数据库；提交任务时随请求转发，服务端仅用于调用该插件
-        在 <code className="font-mono">manifest.permissions.hosts</code> 里申报过的主机。
-      </p>
+          <p className="text-[11px] leading-relaxed text-muted-foreground">
+            凭据只保存在当前浏览器，不会写入服务器数据库；提交任务时随请求转发，服务端仅用于调用该插件
+            在 <code className="font-mono">manifest.permissions.hosts</code> 里申报过的主机。
+          </p>
+        </>
+      ) : (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-[11px] leading-relaxed text-amber-800 dark:text-amber-300">
+          管理员尚未配置该插件的凭据，且未开放用户自带密钥。请联系部署管理员在后台补全。
+        </div>
+      )}
     </div>
   );
 }

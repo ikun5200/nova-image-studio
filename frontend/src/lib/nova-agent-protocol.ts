@@ -527,6 +527,8 @@ export async function postNovaProxyText(params: {
   baseUrl: string;
   apiKey: string;
   model: string;
+  /** 服务端托管密钥模式：后端据此解析真实凭据。 */
+  modelConfigId?: string;
   stream: boolean;
   requestBody: Record<string, unknown>;
   signal?: AbortSignal;
@@ -542,6 +544,7 @@ export async function postNovaProxyText(params: {
       baseUrl: params.baseUrl,
       apiKey: params.apiKey,
       model: params.model,
+      ...(params.modelConfigId ? { modelConfigId: params.modelConfigId } : {}),
       stream: params.stream,
       requestBody: params.requestBody,
     }),

@@ -1,6 +1,7 @@
 'use client';
 
 import { getCompleteImageModels, getCompleteTextModels, loadRegistry } from '@/lib/nova-models';
+import { isServerMode } from '@/lib/deploy-mode';
 
 export function getStoredApiKey(): string {
   const registry = loadRegistry();
@@ -27,6 +28,10 @@ export function getApiKeyFromStorage(): string {
 
 export function hasAnyApiKey(): boolean {
   const registry = loadRegistry();
+  if (isServerMode()) {
+    // 服务端模式：只要管理员配置了任意一类模型，用户端就不该再提示「密钥未配置」。
+    return getCompleteImageModels(registry).length > 0 || getCompleteTextModels(registry).length > 0;
+  }
   return getCompleteImageModels(registry).length > 0 && getCompleteTextModels(registry).length > 0;
 }
 

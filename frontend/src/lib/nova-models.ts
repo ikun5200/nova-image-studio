@@ -14,6 +14,12 @@ import {
   normalizeProviderBaseUrl,
   type ProviderConfig,
 } from '@/lib/provider-registry';
+import {
+  ALLOW_USER_DEFAULTS_KEY,
+  SERVER_REGISTRY_KEY,
+  USER_DEFAULTS_KEY,
+  isServerMode,
+} from '@/lib/deploy-mode';
 
 export type ProviderProtocol = 'google' | 'openai' | 'grok' | 'doubao' | 'alibaba-dashscope';
 export type ImageOutputSize = '512' | '1K' | '2K' | '4K';
@@ -615,9 +621,51 @@ function hydrateRegistry(parsed: Partial<NovaModelRegistry>): NovaModelRegistry 
   };
 }
 
+function mergeUserDefaults(
+  registry: NovaModelRegistry,
+  userDefaults: Partial<DefaultModels>,
+): NovaModelRegistry {
+  const imageIds = new Set(registry.imageModels.filter(isCompleteImageModel).map(model => model.id));
+  const textIds = new Set(registry.textModels.filter(isCompleteTextModel).map(model => model.id));
+  const next: DefaultModels = { ...registry.defaults };
+  for (const key of ['textToImage', 'imageToImage', 'sliceImageEdit'] as const) {
+    const value = userDefaults[key];
+    if (typeof value === 'string' && imageIds.has(value)) next[key] = value;
+  }
+  for (const key of TEXT_DEFAULT_TASKS) {
+    const value = userDefaults[key];
+    if (typeof value === 'string' && textIds.has(value)) next[key] = value;
+  }
+  return { ...registry, defaults: next };
+}
+
+function loadServerRegistry(): NovaModelRegistry | null {
+  try {
+    const raw = localStorage.getItem(SERVER_REGISTRY_KEY);
+    if (!raw) return null;
+    const registry = hydrateRegistry(JSON.parse(raw) as Partial<NovaModelRegistry>);
+    const allowOverride = localStorage.getItem(ALLOW_USER_DEFAULTS_KEY) !== '0';
+    if (!allowOverride) return registry;
+    const userRaw = localStorage.getItem(USER_DEFAULTS_KEY);
+    if (!userRaw) return registry;
+    try {
+      return mergeUserDefaults(registry, JSON.parse(userRaw) as Partial<DefaultModels>);
+    } catch {
+      return registry;
+    }
+  } catch {
+    return null;
+  }
+}
+
 export function loadRegistry(): NovaModelRegistry {
   if (typeof window === 'undefined') {
     return getInitialRegistry();
+  }
+
+  if (isServerMode()) {
+    const serverRegistry = loadServerRegistry();
+    if (serverRegistry) return serverRegistry;
   }
 
   const raw = localStorage.getItem(REGISTRY_KEY);
@@ -631,6 +679,15 @@ export function loadRegistry(): NovaModelRegistry {
 export function saveRegistry(registry: NovaModelRegistry): void {
   if (typeof window === 'undefined') return;
   const normalized = hydrateRegistry(registry);
+  if (isServerMode()) {
+    // 服务端目录只读；设置页保存的是个人默认模型覆盖项。
+    try {
+      localStorage.setItem(USER_DEFAULTS_KEY, JSON.stringify(normalized.defaults));
+    } catch {
+      /* ignore */
+    }
+    return;
+  }
   localStorage.setItem(REGISTRY_KEY, JSON.stringify(normalized));
 }
 

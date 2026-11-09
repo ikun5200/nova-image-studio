@@ -62,6 +62,7 @@ async function startBackend(t, env = {}) {
       HOSTNAME: '127.0.0.1',
       PORT: String(backendPort),
       NOVA_TASK_DB: path.join(tempDir, 'tasks.sqlite'),
+      NOVA_AUTH_DISABLED: 'true',
       NOVA_IMAGE_DIR: path.join(tempDir, 'images'),
       NOVA_IMAGE_STREAM: 'false',
       ...env,

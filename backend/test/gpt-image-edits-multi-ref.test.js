@@ -82,6 +82,7 @@ test('gpt-image-2 图生图多张参考图走 form-data 多 image 字段（birds
       PORT: String(backendPortReal),
       HOSTNAME: '127.0.0.1',
       NOVA_TASK_DB: path.join(tempDir, 'tasks.sqlite'),
+      NOVA_AUTH_DISABLED: 'true',
       NOVA_IMAGE_DIR: path.join(tempDir, 'images'),
     },
     stdio: ['ignore', 'pipe', 'pipe'],

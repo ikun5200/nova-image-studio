@@ -17,6 +17,7 @@ const BACKEND_FILES = [
   { src: path.join(BACKEND_DIR, 'taobao-extract.js'), dest: 'taobao-extract.js' },
   { src: path.join(BACKEND_DIR, 'doubao.js'), dest: 'doubao.js' },
   { src: path.join(BACKEND_DIR, 'alibaba-dashscope.js'), dest: 'alibaba-dashscope.js' },
+  { src: path.join(BACKEND_DIR, 'user-system.js'), dest: 'user-system.js' },
   { src: path.join(BACKEND_DIR, 'package.json'), dest: 'package.json' },
   { src: path.join(BACKEND_DIR, '.env.example'), dest: '.env.example' },
   { src: path.join(BACKEND_DIR, 'blacklist.json'), dest: 'blacklist.json' },

@@ -17,6 +17,7 @@ import { addTextAsset, type TextAsset } from '@/lib/asset-store';
 import { dispatchImageActionToast } from '@/lib/image-actions';
 import { streamPromptOptimize, type StreamPromptOptimizeHandle } from '@/lib/prompt-optimize-client';
 import { loadJsonFromStorage, saveJsonToStorage } from '@/lib/settings-storage';
+import { isServerMode } from '@/lib/deploy-mode';
 import { requireDefaultConfiguredTextModel } from '@/lib/model-endpoints';
 import { type ModelId } from '@/lib/gemini-config';
 import {
@@ -72,7 +73,9 @@ export function TextToImageForm({ onSubmit, disabled = false, onDraftConsumed, o
   const [prompt, setPrompt] = useState('');
   const [queue, setQueue] = useState<QueuedPrompt[]>([]);
 
-  const disabledMessage = '请先在设置中配置 Nova API 密钥，配置完成后即可开始生成图片。';
+  const disabledMessage = isServerMode()
+    ? '管理员尚未配置可用的图片模型，请联系部署管理员在后台添加。'
+    : '请先在设置中配置 Nova API 密钥，配置完成后即可开始生成图片。';
 
   const [model, setModel] = useState<ModelId>('gemini-3-pro-image-preview');
   const [outputSize, setOutputSize] = useState<OutputSize>('1K');
@@ -326,11 +329,11 @@ export function TextToImageForm({ onSubmit, disabled = false, onDraftConsumed, o
               <Info className="h-5 w-5" />
             </div>
             <div className="max-w-md">
-              <p className="text-base font-medium text-foreground">API 密钥未配置</p>
+              <p className="text-base font-medium text-foreground">{isServerMode() ? '管理员尚未配置图片模型' : 'API 密钥未配置'}</p>
               <p className="mt-2 text-sm text-muted-foreground">{disabledMessage}</p>
             </div>
             <Button onClick={() => setMissingApiKeyDialogOpen(true)}>
-              配置
+              {isServerMode() ? '查看设置' : '配置'}
             </Button>
           </div>
         ) : (

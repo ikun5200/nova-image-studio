@@ -472,6 +472,7 @@ export function useAgentChat(sessionId = 'default') {
           previewDataUrl,
           describeSignal,
           configured.baseUrl,
+          configured.id,
         );
         if (!isSessionCurrent(sessionGeneration)) throw new Error('已停止');
         return description || '(无描述)';
@@ -610,6 +611,7 @@ export function useAgentChat(sessionId = 'default') {
       record.thumbnail,
       undefined,
       configured.baseUrl,
+      configured.id,
     );
     const description = newDescription || '(无描述)';
     if (!isSessionCurrent(sessionGeneration)) return description;
@@ -653,6 +655,7 @@ export function useAgentChat(sessionId = 'default') {
     const handle = streamAgentChat(
       {
         apiKey: configured.apiKey,
+        modelConfigId: configured.id,
         model: configured.modelId,
         protocol: configured.protocol,
         history,
@@ -1349,6 +1352,7 @@ export function useAgentChat(sessionId = 'default') {
       const layout = resolveSubmitLayout(model, params.outputSize, params.aspectRatio, prompt);
       const taskId = await createNovaTask({
         apiKey: provider.apiKey,
+        modelConfigId: provider.modelConfigId,
         baseUrl: provider.baseUrl,
         protocol: provider.protocol,
         mode: references.length > 0 ? 'image-to-image' : 'text-to-image',

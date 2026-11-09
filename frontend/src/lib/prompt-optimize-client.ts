@@ -234,6 +234,7 @@ async function runAttempt(
         protocol,
         baseUrl: actualBaseUrl,
         apiKey: input.apiKey,
+        ...(configured?.id ? { modelConfigId: configured.id } : {}),
         model: actualModel,
         stream: true,
         requestBody: body,

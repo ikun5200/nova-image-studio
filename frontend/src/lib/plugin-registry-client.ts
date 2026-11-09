@@ -21,6 +21,8 @@ export interface PluginRegistrySnapshot {
   failures: PluginLoadFailure[];
   loadedAt: string;
   pluginsDir: string;
+  /** 管理员是否允许用户自带插件凭据。 */
+  allowByok: boolean;
 }
 
 const EMPTY_SNAPSHOT: PluginRegistrySnapshot = {
@@ -28,6 +30,7 @@ const EMPTY_SNAPSHOT: PluginRegistrySnapshot = {
   failures: [],
   loadedAt: '',
   pluginsDir: '',
+  allowByok: false,
 };
 
 /**
@@ -87,6 +90,7 @@ export async function loadPluginRegistry(force = false): Promise<PluginRegistryS
         failures: Array.isArray(data?.failures) ? data.failures : [],
         loadedAt: typeof data?.loadedAt === 'string' ? data.loadedAt : '',
         pluginsDir: typeof data?.pluginsDir === 'string' ? data.pluginsDir : '',
+        allowByok: data?.allowByok !== false,
       };
       cache = snapshot;
       notify(snapshot);
@@ -173,7 +177,12 @@ export function setPluginCredential(pluginId: string, credential: Partial<Plugin
 }
 
 export function hasPluginCredential(plugin: InstalledPlugin): boolean {
-  return getPluginCredential(plugin).apiKey.length > 0;
+  return Boolean(plugin.credentialConfigured) || getPluginCredential(plugin).apiKey.length > 0;
+}
+
+/** 服务端已统一配置凭据时，前端不应再展示个人凭据输入框。 */
+export function usesServerPluginCredential(plugin: InstalledPlugin): boolean {
+  return Boolean(plugin.credentialConfigured);
 }
 
 // ===== 最近使用的插件 =====

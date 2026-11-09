@@ -16,6 +16,8 @@ import { readSseStream } from '@/lib/sse-stream-parser';
 
 export interface StreamReverseInput {
   apiKey: string;
+  /** 服务端托管密钥模式：后端据此解析真实凭据。 */
+  modelConfigId?: string;
   model: ReversePromptModelId;
   mode: ReversePromptMode;
   imageDataUrl: string;
@@ -46,7 +48,11 @@ export function streamReversePrompt(
       const protocol = (configuredModel?.protocol || 'openai-responses') as TextProviderProtocol;
       const resolvedBaseUrl = configuredModel?.baseUrl || baseUrl;
       const resolvedModelId = configuredModel?.modelId || input.model;
-      await streamTextProtocol(protocol, resolvedBaseUrl, { ...input, model: resolvedModelId }, callbacks, controller.signal);
+      await streamTextProtocol(protocol, resolvedBaseUrl, {
+        ...input,
+        model: resolvedModelId,
+        modelConfigId: configuredModel?.id || input.modelConfigId,
+      }, callbacks, controller.signal);
     } catch (err) {
       if (controller.signal.aborted) return;
       callbacks.onError(normalizeStreamError(err));
@@ -83,6 +89,7 @@ async function streamTextProtocol(
       protocol,
       baseUrl,
       apiKey: input.apiKey,
+      ...(input.modelConfigId ? { modelConfigId: input.modelConfigId } : {}),
       model: input.model,
       stream: true,
       requestBody: body,

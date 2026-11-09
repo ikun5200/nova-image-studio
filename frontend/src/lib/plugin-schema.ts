@@ -130,6 +130,8 @@ export interface InstalledPlugin {
   media: Partial<Record<MediaKind, { maxCount: number }>>;
   models: PluginModelInfo[];
   uiSchema: PluginUiSchema;
+  /** 管理员已在服务端配置该插件的凭据（服务端部署模式）。 */
+  credentialConfigured?: boolean;
 }
 
 /** 表单值：facet 取值 + 字段取值 */

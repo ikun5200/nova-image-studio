@@ -65,6 +65,7 @@ export async function submitNodeGeneration(args: {
   const layout = resolveSubmitLayout(resolveTaskModel(args.config) as ModelId, args.config.outputSize, args.config.aspectRatio, args.prompt);
   const taskId = await createNovaTask({
     apiKey,
+    modelConfigId: provider.modelConfigId,
     baseUrl: provider.baseUrl,
     protocol: provider.protocol,
     mode: imageRefs.length > 0 ? "image-to-image" : "text-to-image",
@@ -141,6 +142,7 @@ export async function generateCanvasImages(args: {
   const layout = resolveSubmitLayout(resolveTaskModel(args.config) as ModelId, args.config.outputSize, args.config.aspectRatio, args.prompt);
   const taskId = await createNovaTask({
     apiKey,
+    modelConfigId: provider.modelConfigId,
     baseUrl: provider.baseUrl,
     protocol: provider.protocol,
     mode: imageRefs.length > 0 ? "image-to-image" : "text-to-image",

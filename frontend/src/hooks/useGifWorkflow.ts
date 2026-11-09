@@ -380,6 +380,7 @@ export function useGifWorkflow(): UseGifWorkflowResult {
     try {
       const serverTaskId = await createNovaTask({
         apiKey: provider.apiKey,
+        modelConfigId: provider.modelConfigId,
         baseUrl: provider.baseUrl,
         protocol: provider.protocol,
         mode: nativeGif ? 'text-to-image' : 'image-to-image',

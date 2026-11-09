@@ -20,6 +20,7 @@ const pluginRegistry = require('./plugin-runtime/registry');
 const pluginExecutor = require('./plugin-runtime/executor');
 const { validateAndNormalizeInput, InputError } = require('./plugin-runtime/input');
 const { createMediaStore } = require('./plugin-runtime/media');
+const { createUserSystem, UserSystemError, SESSION_COOKIE, SERVER_KEY_SENTINEL } = require('./user-system');
 
 const ENV_FILE_PATH = path.join(process.cwd(), '.env');
 const TASK_STATUS = {
@@ -146,6 +147,35 @@ const CUSTOM_IMAGE_SIZE_LIMITS = {
   maxPixels: 8294400,
 };
 const IS_DEV = process.env.NODE_ENV !== 'production';
+// 本地 / 桌面单用户模式：跳过登录，继续使用浏览器自带密钥（BYOK）。
+// 服务器多用户部署保持默认 false，由管理员统一配置模型。
+const AUTH_DISABLED = String(process.env.NOVA_AUTH_DISABLED || 'false').toLowerCase() === 'true';
+
+function getAppVersion() {
+  try {
+    const pkg = require('./package.json');
+    return pkg && pkg.version ? String(pkg.version) : '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+}
+const LOCAL_USER = Object.freeze({
+  id: 'local-user',
+  username: 'local',
+  displayName: '本地用户',
+  role: 'admin',
+  status: 'active',
+  quota: {
+    dailyImageTasks: 0,
+    dailyVideoTasks: 0,
+    dailyTextRequests: 0,
+    monthlyImageTasks: 0,
+    monthlyVideoTasks: 0,
+    monthlyTextRequests: 0,
+    maxPendingTasks: 100,
+    maxParallelCount: 8,
+  },
+});
 const STATIC_DIR = path.join(__dirname, '..', 'frontend', 'out');
 const IMAGE_DIR = process.env.NOVA_IMAGE_DIR || path.join(__dirname, 'nova-images');
 // CDP 功能为启动级开关：默认关闭，显式置 true 时才提供 /api/nova/cdp/*。
@@ -201,11 +231,13 @@ setInterval(cleanupOldCdpImages, 60 * 60 * 1000);
 const app = IS_DEV ? next({ dev: IS_DEV, hostname: HOSTNAME, port: PORT, dir: path.join(__dirname, '..', 'frontend') }) : null;
 const handle = app ? app.getRequestHandler() : null;
 const db = new Database(DB_PATH);
+const userSystem = createUserSystem({ db, dataDir: path.dirname(path.resolve(DB_PATH)) });
 const apiKeys = new Map();
-const taskSources = new Map(); // taskId -> { ip, apiKeyHash }
+const taskSources = new Map(); // taskId -> { ip, userId, apiKeyHash }
 const rateLimitBuckets = new Map(); // key -> { windowStart: number, count: number }
 const pendingCountByIp = new Map(); // ip -> count
 const pendingCountByApiKeyHash = new Map(); // apiKeyHash -> count
+const pendingCountByUserId = new Map(); // userId -> count
 const queue = [];
 let activeCount = 0;
 
@@ -527,6 +559,15 @@ function cleanupTaskRuntimeState(taskId) {
         pendingCountByApiKeyHash.set(source.apiKeyHash, hashCount - 1);
       }
     }
+    // 递减用户待处理计数
+    if (source.userId) {
+      const userCount = pendingCountByUserId.get(source.userId) || 0;
+      if (userCount <= 1) {
+        pendingCountByUserId.delete(source.userId);
+      } else {
+        pendingCountByUserId.set(source.userId, userCount - 1);
+      }
+    }
   }
   apiKeys.delete(taskId);
   taskRefImages.delete(taskId);
@@ -540,6 +581,7 @@ function getPendingCountForSource(fieldName, value) {
   // O(1) 查找：使用独立计数器代替遍历 taskSources
   if (fieldName === 'ip') return pendingCountByIp.get(value) || 0;
   if (fieldName === 'apiKeyHash') return pendingCountByApiKeyHash.get(value) || 0;
+  if (fieldName === 'userId') return pendingCountByUserId.get(value) || 0;
   // fallback：未知字段仍用遍历（不应发生）
   let count = 0;
   for (const source of taskSources.values()) {
@@ -577,19 +619,28 @@ function cleanupRateLimitBuckets() {
 
 function enforceRateLimit(req, body, config) {
   const ip = getClientIp(req);
-  const apiKeyHash = hashApiKey(body.apiKey);
+  const userId = req.novaUser?.id || '';
+  // 服务端托管密钥模式下前端会带一个占位 Key，不能把它当作真实凭据做限流桶。
+  const apiKeyHash = body?.apiKey && body.apiKey !== SERVER_KEY_SENTINEL ? hashApiKey(body.apiKey) : '';
   const ipLimit = consumeRateLimit(`ip:${ip}`, config.maxRequestsPerIp, config.rateLimitWindowMs);
   if (!ipLimit.allowed) {
     throw createHttpError(429, 'RATE_LIMITED', LIMIT_ERROR_MESSAGES.rateLimited, Math.max(config.retryAfterSeconds, ipLimit.retryAfterSeconds));
   }
-  const apiKeyLimit = consumeRateLimit(`api:${apiKeyHash}`, config.maxRequestsPerApiKey, config.rateLimitWindowMs);
-  if (!apiKeyLimit.allowed) {
-    throw createHttpError(429, 'RATE_LIMITED', LIMIT_ERROR_MESSAGES.rateLimited, Math.max(config.retryAfterSeconds, apiKeyLimit.retryAfterSeconds));
+  if (userId) {
+    const userLimit = consumeRateLimit(`user:${userId}`, config.maxRequestsPerApiKey, config.rateLimitWindowMs);
+    if (!userLimit.allowed) {
+      throw createHttpError(429, 'RATE_LIMITED', LIMIT_ERROR_MESSAGES.rateLimited, Math.max(config.retryAfterSeconds, userLimit.retryAfterSeconds));
+    }
+  } else if (apiKeyHash) {
+    const apiKeyLimit = consumeRateLimit(`api:${apiKeyHash}`, config.maxRequestsPerApiKey, config.rateLimitWindowMs);
+    if (!apiKeyLimit.allowed) {
+      throw createHttpError(429, 'RATE_LIMITED', LIMIT_ERROR_MESSAGES.rateLimited, Math.max(config.retryAfterSeconds, apiKeyLimit.retryAfterSeconds));
+    }
   }
-  return { ip, apiKeyHash };
+  return { ip, userId, apiKeyHash };
 }
 
-function enforceQueueCapacity(source, config) {
+function enforceQueueCapacity(source, config, { kind = 'image', parallelCount = 1 } = {}) {
   const stats = getQueueStats();
   if (stats.pendingCount >= config.maxQueueSize) {
     throw createHttpError(503, 'QUEUE_FULL', LIMIT_ERROR_MESSAGES.queueFull, config.retryAfterSeconds);
@@ -597,7 +648,17 @@ function enforceQueueCapacity(source, config) {
   if (getPendingCountForSource('ip', source.ip) >= config.maxPendingTasksPerIp) {
     throw createHttpError(429, 'TOO_MANY_PENDING_TASKS', LIMIT_ERROR_MESSAGES.tooManyPending, config.retryAfterSeconds);
   }
-  if (getPendingCountForSource('apiKeyHash', source.apiKeyHash) >= config.maxPendingTasksPerApiKey) {
+  if (source.userId) {
+    const pendingCount = getPendingCountForSource('userId', source.userId);
+    try {
+      userSystem.checkQuota(source.userId, kind, { parallelCount, pendingCount });
+    } catch (error) {
+      if (error instanceof UserSystemError) {
+        throw createHttpError(error.statusCode, error.code, error.message, config.retryAfterSeconds);
+      }
+      throw error;
+    }
+  } else if (source.apiKeyHash && getPendingCountForSource('apiKeyHash', source.apiKeyHash) >= config.maxPendingTasksPerApiKey) {
     throw createHttpError(429, 'TOO_MANY_PENDING_TASKS', LIMIT_ERROR_MESSAGES.tooManyPending, config.retryAfterSeconds);
   }
 }
@@ -868,6 +929,10 @@ function initDatabase() {
   for (const id of interruptedIds) {
     deleteTaskImageFiles(id);
   }
+
+  // 多用户 / 管理员配置中心：用户、会话、供应商、模型、用量、审计。
+  userSystem.initSchema();
+  userSystem.cleanupSessions();
 }
 
 function sendJson(res, statusCode, body, extraHeaders = {}) {
@@ -894,6 +959,523 @@ function sendHttpError(res, error) {
     code: error.code,
     retryAfter: error.retryAfter,
   }, headers);
+}
+
+// ===== 鉴权 / 会话 / 管理员 API =====
+const LOGIN_ATTEMPT_LIMIT = 10;
+const LOGIN_ATTEMPT_WINDOW_MS = 15 * 60 * 1000;
+const loginAttemptBuckets = new Map();
+
+function parseCookieHeader(req) {
+  const raw = String(req.headers.cookie || '');
+  const cookies = {};
+  for (const part of raw.split(';')) {
+    const index = part.indexOf('=');
+    if (index <= 0) continue;
+    const key = part.slice(0, index).trim();
+    const value = part.slice(index + 1).trim();
+    if (key) cookies[key] = decodeURIComponent(value);
+  }
+  return cookies;
+}
+
+function getSessionTokenFromRequest(req) {
+  return parseCookieHeader(req)[SESSION_COOKIE] || '';
+}
+
+function isSecureRequest(req) {
+  if (String(process.env.NOVA_COOKIE_SECURE || '').toLowerCase() === 'true') return true;
+  if (req.socket && req.socket.encrypted) return true;
+  const forwarded = firstHeaderValue(req.headers['x-forwarded-proto']);
+  return String(forwarded || '').toLowerCase() === 'https';
+}
+
+function buildSessionCookie(token, days, secure) {
+  return `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.max(60, Math.floor(days * 86400))}${secure ? '; Secure' : ''}`;
+}
+
+function buildClearSessionCookie(secure) {
+  return `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure ? '; Secure' : ''}`;
+}
+
+function sendUserError(res, error) {
+  const status = Number(error?.statusCode) || 400;
+  sendJson(res, status, { error: error?.message || '请求失败', code: error?.code });
+}
+
+function getPublicSettingsWithMode() {
+  return {
+    ...userSystem.getPublicSettings(),
+    setupRequired: AUTH_DISABLED ? false : userSystem.isSetupRequired(),
+    serverMode: !AUTH_DISABLED,
+  };
+}
+
+function isByokAllowed() {
+  return AUTH_DISABLED || userSystem.getSettings().allowByok;
+}
+
+function authenticateRequest(req) {
+  if (AUTH_DISABLED) return LOCAL_USER;
+  const token = getSessionTokenFromRequest(req);
+  if (!token) return null;
+  return userSystem.getSessionUser(token);
+}
+
+function requireUser(req, res) {
+  const user = authenticateRequest(req);
+  if (!user) {
+    sendJson(res, 401, { error: '请先登录', code: 'UNAUTHORIZED' });
+    return null;
+  }
+  req.novaUser = user;
+  return user;
+}
+
+function assertTaskAccess(req, res, taskId) {
+  const user = req.novaUser;
+  if (!user) {
+    sendJson(res, 401, { error: '请先登录', code: 'UNAUTHORIZED' });
+    return false;
+  }
+  if (user.role === 'admin') return true;
+  const row = db.prepare('SELECT user_id FROM tasks WHERE id = ?').get(taskId);
+  // 不存在的任务继续走原来的「已过期」响应，不额外泄露存在性。
+  if (!row) return true;
+  if (row.user_id && row.user_id === user.id) return true;
+  sendJson(res, 403, { error: '无权访问该任务', code: 'FORBIDDEN' });
+  return false;
+}
+
+function consumeLoginAttempt(bucketKey) {
+  const now = Date.now();
+  const existing = loginAttemptBuckets.get(bucketKey);
+  if (!existing || now - existing.windowStart >= LOGIN_ATTEMPT_WINDOW_MS) {
+    loginAttemptBuckets.set(bucketKey, { windowStart: now, count: 1 });
+    return true;
+  }
+  if (existing.count >= LOGIN_ATTEMPT_LIMIT) return false;
+  existing.count += 1;
+  return true;
+}
+
+async function handleAuthApi(req, res, apiPathname) {
+  if (AUTH_DISABLED) {
+    if (req.method === 'GET' && apiPathname === '/api/nova/auth/status') {
+      sendJson(res, 200, getPublicSettingsWithMode());
+      return true;
+    }
+    if (req.method === 'GET' && apiPathname === '/api/nova/auth/me') {
+      sendJson(res, 200, { user: LOCAL_USER, settings: getPublicSettingsWithMode() });
+      return true;
+    }
+    if (req.method === 'POST' && apiPathname === '/api/nova/auth/logout') {
+      sendJson(res, 200, { ok: true });
+      return true;
+    }
+    sendJson(res, 404, { error: '当前为本地单用户模式，未启用登录', code: 'AUTH_DISABLED' });
+    return true;
+  }
+
+  if (req.method === 'GET' && apiPathname === '/api/nova/auth/status') {
+    sendJson(res, 200, getPublicSettingsWithMode());
+    return true;
+  }
+
+  if (req.method === 'POST' && apiPathname === '/api/nova/auth/login') {
+    const body = await readJsonBody(req);
+    const username = String(body?.username || '').trim();
+    const password = String(body?.password || '');
+    const ip = getClientIp(req);
+    const bucketKey = `login:${ip}:${username.toLowerCase()}`;
+    if (!consumeLoginAttempt(bucketKey)) {
+      sendJson(res, 429, { error: '登录尝试过于频繁，请 15 分钟后再试', code: 'LOGIN_RATE_LIMITED' });
+      return true;
+    }
+    const user = userSystem.authenticate(username, password);
+    if (!user) {
+      sendJson(res, 401, { error: '用户名或密码错误', code: 'INVALID_CREDENTIALS' });
+      return true;
+    }
+    loginAttemptBuckets.delete(bucketKey);
+    const session = userSystem.createSession(user.id, { ip, userAgent: req.headers['user-agent'] });
+    sendJson(res, 200, { user, settings: getPublicSettingsWithMode() }, {
+      'Set-Cookie': buildSessionCookie(session.token, session.sessionDays, isSecureRequest(req)),
+    });
+    return true;
+  }
+
+  if (req.method === 'POST' && apiPathname === '/api/nova/auth/logout') {
+    userSystem.deleteSession(getSessionTokenFromRequest(req));
+    sendJson(res, 200, { ok: true }, {
+      'Set-Cookie': buildClearSessionCookie(isSecureRequest(req)),
+    });
+    return true;
+  }
+
+  if (req.method === 'GET' && apiPathname === '/api/nova/auth/me') {
+    const user = requireUser(req, res);
+    if (!user) return true;
+    sendJson(res, 200, { user, settings: getPublicSettingsWithMode() });
+    return true;
+  }
+
+  if (req.method === 'POST' && apiPathname === '/api/nova/auth/setup') {
+    if (!userSystem.isSetupRequired()) {
+      sendJson(res, 409, { error: '系统已完成初始化', code: 'ALREADY_SETUP' });
+      return true;
+    }
+    const body = await readJsonBody(req);
+    const user = userSystem.setupAdmin({
+      username: body?.username,
+      password: body?.password,
+      displayName: body?.displayName,
+    });
+    const session = userSystem.createSession(user.id, {
+      ip: getClientIp(req),
+      userAgent: req.headers['user-agent'],
+    });
+    userSystem.audit(user, 'setup.admin', user.username, null);
+    sendJson(res, 200, { user, settings: getPublicSettingsWithMode() }, {
+      'Set-Cookie': buildSessionCookie(session.token, session.sessionDays, isSecureRequest(req)),
+    });
+    return true;
+  }
+
+  if (req.method === 'POST' && apiPathname === '/api/nova/auth/register') {
+    const settings = userSystem.getSettings();
+    if (!settings.registrationEnabled) {
+      sendJson(res, 403, { error: '管理员未开放注册', code: 'REGISTRATION_CLOSED' });
+      return true;
+    }
+    const body = await readJsonBody(req);
+    const user = userSystem.createUser({
+      username: body?.username,
+      password: body?.password,
+      displayName: body?.displayName,
+      role: 'user',
+    });
+    const session = userSystem.createSession(user.id, {
+      ip: getClientIp(req),
+      userAgent: req.headers['user-agent'],
+    });
+    userSystem.audit(user, 'auth.register', user.username, null);
+    sendJson(res, 200, { user, settings: getPublicSettingsWithMode() }, {
+      'Set-Cookie': buildSessionCookie(session.token, session.sessionDays, isSecureRequest(req)),
+    });
+    return true;
+  }
+
+  if (req.method === 'POST' && apiPathname === '/api/nova/auth/change-password') {
+    const user = requireUser(req, res);
+    if (!user) return true;
+    const body = await readJsonBody(req);
+    userSystem.changePassword(user.id, String(body?.currentPassword || ''), String(body?.newPassword || ''));
+    userSystem.audit(user, 'auth.change_password', user.username, null);
+    sendJson(res, 200, { ok: true }, {
+      'Set-Cookie': buildClearSessionCookie(isSecureRequest(req)),
+    });
+    return true;
+  }
+
+  sendJson(res, 404, { error: 'Not Found' });
+  return true;
+}
+
+function normalizeUpstreamModelList(kind, payload) {
+  const list = [];
+  if (!payload || typeof payload !== 'object') return list;
+  if (kind === 'google' && Array.isArray(payload.models)) {
+    for (const item of payload.models) {
+      const id = String(item?.name || '').replace(/^models\//, '');
+      if (id) list.push({ id, name: String(item?.displayName || id) });
+    }
+    return list;
+  }
+  if (Array.isArray(payload.data)) {
+    for (const item of payload.data) {
+      const id = String(item?.id || item?.name || '');
+      if (id) list.push({ id, name: String(item?.display_name || item?.name || id) });
+    }
+  }
+  return list;
+}
+
+async function testProviderConnection(provider) {
+  const kind = provider.kind;
+  const protocol = kind === 'google' ? 'google' : kind === 'anthropic-messages' ? 'anthropic-messages' : 'openai';
+  const baseUrl = normalizeProtocolBaseUrl(protocol, provider.baseUrl);
+  let url;
+  const headers = {};
+  if (kind === 'google') {
+    url = `${baseUrl}/v1beta/models`;
+    headers['x-goog-api-key'] = provider.apiKey;
+    headers['Authorization'] = `Bearer ${provider.apiKey}`;
+  } else if (kind === 'anthropic-messages') {
+    url = `${baseUrl}/v1/models`;
+    headers['x-api-key'] = provider.apiKey;
+    headers['anthropic-version'] = '2023-06-01';
+  } else {
+    url = `${baseUrl}/v1/models`;
+    headers['Authorization'] = `Bearer ${provider.apiKey}`;
+  }
+  const response = await fetchWithTimeout(url, { method: 'GET', headers });
+  const text = await response.text();
+  let payload = null;
+  try { payload = text ? JSON.parse(text) : null; } catch { /* ignore */ }
+  if (!response.ok) {
+    throw createHttpError(502, 'UPSTREAM_ERROR', `上游返回 ${response.status}: ${String(text).slice(0, 200)}`);
+  }
+  const models = normalizeUpstreamModelList(kind, payload);
+  return { ok: true, models, count: models.length };
+}
+
+async function handleAdminApi(req, res, apiPathname, searchParams, admin) {
+  const settings = userSystem.getSettings();
+
+  if (req.method === 'GET' && apiPathname === '/api/nova/admin/overview') {
+    const version = getAppVersion();
+    const registry = pluginRegistry.describeRegistryForClient();
+    sendJson(res, 200, {
+      ...userSystem.getOverview({ queueStats: getQueueStats() }),
+      settings,
+      system: userSystem.getSystemInfo({ version, uptimeSeconds: Math.floor(process.uptime()) }),
+      plugins: {
+        installed: registry.plugins.length,
+        failures: registry.failures.length,
+      },
+    });
+    return true;
+  }
+
+  // ===== 用户管理 =====
+  if (req.method === 'GET' && apiPathname === '/api/nova/admin/users') {
+    sendJson(res, 200, { users: userSystem.listUsers({ search: searchParams.get('search') || '' }) });
+    return true;
+  }
+
+  if (req.method === 'POST' && apiPathname === '/api/nova/admin/users') {
+    const body = await readJsonBody(req);
+    const user = userSystem.createUser({
+      username: body?.username,
+      password: body?.password,
+      displayName: body?.displayName,
+      role: body?.role,
+      status: body?.status,
+      quota: body?.quota,
+    });
+    userSystem.audit(admin, 'user.create', user.username, { role: user.role });
+    sendJson(res, 200, { user });
+    return true;
+  }
+
+  const userMatch = apiPathname.match(/^\/api\/nova\/admin\/users\/([^/]+)$/);
+  if (userMatch) {
+    const userId = decodeURIComponent(userMatch[1]);
+    if (req.method === 'PATCH') {
+      const body = await readJsonBody(req);
+      const user = userSystem.updateUser(userId, body || {});
+      userSystem.audit(admin, 'user.update', user.username, {
+        role: body?.role,
+        status: body?.status,
+        quota: body?.quota,
+        passwordReset: Boolean(body?.password),
+      });
+      sendJson(res, 200, { user });
+      return true;
+    }
+    if (req.method === 'DELETE') {
+      const target = userSystem.getUserById(userId);
+      userSystem.deleteUser(userId, admin.id);
+      userSystem.audit(admin, 'user.delete', target?.username || userId, null);
+      sendJson(res, 200, { ok: true });
+      return true;
+    }
+  }
+
+  // ===== 供应商 =====
+  if (req.method === 'GET' && apiPathname === '/api/nova/admin/providers') {
+    sendJson(res, 200, { providers: userSystem.listProviders() });
+    return true;
+  }
+
+  if (req.method === 'POST' && apiPathname === '/api/nova/admin/providers') {
+    const body = await readJsonBody(req);
+    const provider = userSystem.createProvider(body || {});
+    userSystem.audit(admin, 'provider.create', provider.name, { kind: provider.kind });
+    sendJson(res, 200, { provider });
+    return true;
+  }
+
+  const providerMatch = apiPathname.match(/^\/api\/nova\/admin\/providers\/([^/]+)(?:\/(test))?$/);
+  if (providerMatch) {
+    const providerId = decodeURIComponent(providerMatch[1]);
+    const action = providerMatch[2];
+    if (req.method === 'POST' && action === 'test') {
+      const provider = userSystem.getProviderSecret(providerId);
+      const result = await testProviderConnection(provider);
+      sendJson(res, 200, result);
+      return true;
+    }
+    if (req.method === 'PATCH') {
+      const body = await readJsonBody(req);
+      const provider = userSystem.updateProvider(providerId, body || {});
+      userSystem.audit(admin, 'provider.update', provider.name, {
+        kind: body?.kind,
+        enabled: body?.enabled,
+        keyChanged: Boolean(body?.apiKey) || body?.clearApiKey === true,
+      });
+      sendJson(res, 200, { provider });
+      return true;
+    }
+    if (req.method === 'DELETE') {
+      const target = userSystem.listProviders().find(provider => provider.id === providerId);
+      userSystem.deleteProvider(providerId);
+      userSystem.audit(admin, 'provider.delete', target?.name || providerId, null);
+      sendJson(res, 200, { ok: true });
+      return true;
+    }
+  }
+
+  // ===== 模型 =====
+  if (req.method === 'GET' && apiPathname === '/api/nova/admin/models') {
+    sendJson(res, 200, { models: userSystem.listModels(), defaults: userSystem.resolveDefaults() });
+    return true;
+  }
+
+  if (req.method === 'POST' && apiPathname === '/api/nova/admin/models') {
+    const body = await readJsonBody(req);
+    const model = userSystem.createModel(body || {});
+    userSystem.audit(admin, 'model.create', model.name, { providerId: model.providerId, useType: model.useType });
+    sendJson(res, 200, { model });
+    return true;
+  }
+
+  const modelMatch = apiPathname.match(/^\/api\/nova\/admin\/models\/([^/]+)$/);
+  if (modelMatch) {
+    const modelId = decodeURIComponent(modelMatch[1]);
+    if (req.method === 'PATCH') {
+      const body = await readJsonBody(req);
+      const model = userSystem.updateModel(modelId, body || {});
+      userSystem.audit(admin, 'model.update', model.name, { enabled: body?.enabled, protocol: body?.protocol });
+      sendJson(res, 200, { model });
+      return true;
+    }
+    if (req.method === 'DELETE') {
+      const target = userSystem.listModels().find(model => model.id === modelId);
+      userSystem.deleteModel(modelId);
+      userSystem.audit(admin, 'model.delete', target?.name || modelId, null);
+      sendJson(res, 200, { ok: true });
+      return true;
+    }
+  }
+
+  // ===== 默认模型 =====
+  if (req.method === 'GET' && apiPathname === '/api/nova/admin/defaults') {
+    sendJson(res, 200, { defaults: userSystem.resolveDefaults() });
+    return true;
+  }
+  if (req.method === 'PUT' && apiPathname === '/api/nova/admin/defaults') {
+    const body = await readJsonBody(req);
+    const defaults = userSystem.updateModelDefaults(body?.defaults || body || {});
+    userSystem.audit(admin, 'defaults.update', '', defaults);
+    sendJson(res, 200, { defaults });
+    return true;
+  }
+
+  // ===== 任务管理 =====
+  if (req.method === 'GET' && apiPathname === '/api/nova/admin/tasks') {
+    sendJson(res, 200, userSystem.listTasks({
+      status: searchParams.get('status') || '',
+      userId: searchParams.get('userId') || '',
+      limit: searchParams.get('limit') || 50,
+      offset: searchParams.get('offset') || 0,
+    }));
+    return true;
+  }
+
+  const taskMatch = apiPathname.match(/^\/api\/nova\/admin\/tasks\/([^/]+)$/);
+  if (taskMatch && req.method === 'DELETE') {
+    const taskId = decodeURIComponent(taskMatch[1]);
+    deleteTask(taskId);
+    userSystem.audit(admin, 'task.delete', taskId, null);
+    sendJson(res, 200, { ok: true });
+    return true;
+  }
+
+  // ===== 用量 / 审计 / 设置 =====
+  if (req.method === 'GET' && apiPathname === '/api/nova/admin/usage') {
+    sendJson(res, 200, userSystem.getUsageSummary(Number(searchParams.get('days') || 30)));
+    return true;
+  }
+
+  if (req.method === 'GET' && apiPathname === '/api/nova/admin/audit') {
+    sendJson(res, 200, {
+      items: userSystem.listAudit({
+        limit: Number(searchParams.get('limit') || 100),
+        offset: Number(searchParams.get('offset') || 0),
+      }),
+    });
+    return true;
+  }
+
+  if (req.method === 'GET' && apiPathname === '/api/nova/admin/settings') {
+    sendJson(res, 200, { settings });
+    return true;
+  }
+
+  if (req.method === 'PUT' && apiPathname === '/api/nova/admin/settings') {
+    const body = await readJsonBody(req);
+    const next = userSystem.updateSettings(body?.settings || body || {});
+    userSystem.audit(admin, 'settings.update', '', {
+      registrationEnabled: next.registrationEnabled,
+      allowByok: next.allowByok,
+      allowUserModelOverride: next.allowUserModelOverride,
+    });
+    sendJson(res, 200, { settings: next });
+    return true;
+  }
+
+  if (req.method === 'GET' && apiPathname === '/api/nova/admin/system') {
+    const version = getAppVersion();
+    sendJson(res, 200, userSystem.getSystemInfo({ version, uptimeSeconds: Math.floor(process.uptime()) }));
+    return true;
+  }
+
+  // ===== 插件与凭据 =====
+  if (req.method === 'GET' && apiPathname === '/api/nova/admin/plugins') {
+    const registry = pluginRegistry.describeRegistryForClient();
+    sendJson(res, 200, {
+      ...registry,
+      credentials: userSystem.listPluginCredentialStatus(),
+      mediaLimits: pluginMedia.getLimitsForClient(),
+    });
+    return true;
+  }
+
+  const pluginCredentialMatch = apiPathname.match(/^\/api\/nova\/admin\/plugins\/([^/]+)\/credential$/);
+  if (pluginCredentialMatch) {
+    const pluginId = decodeURIComponent(pluginCredentialMatch[1]);
+    if (req.method === 'PUT') {
+      const body = await readJsonBody(req);
+      const credential = userSystem.setPluginCredential(pluginId, {
+        baseUrl: body?.baseUrl,
+        apiKey: body?.apiKey,
+      });
+      userSystem.audit(admin, 'plugin.credential.update', pluginId, { hasBaseUrl: Boolean(credential.baseUrl) });
+      sendJson(res, 200, { credential });
+      return true;
+    }
+    if (req.method === 'DELETE') {
+      userSystem.deletePluginCredential(pluginId);
+      userSystem.audit(admin, 'plugin.credential.delete', pluginId, null);
+      sendJson(res, 200, { ok: true });
+      return true;
+    }
+  }
+
+  sendJson(res, 404, { error: 'Not Found' });
+  return true;
 }
 
 function getContentType(filePath) {
@@ -1066,6 +1648,21 @@ function normalizeGptImageAdvancedParams(params = {}) {
   };
 }
 
+function resolveTaskModel(body) {
+  if (body?.modelConfigId) {
+    const resolved = userSystem.resolveModel(String(body.modelConfigId), 'image');
+    body.apiKey = resolved.apiKey;
+    body.baseUrl = resolved.baseUrl;
+    body.protocol = resolved.protocol;
+    body.model = resolved.upstreamId;
+    return resolved;
+  }
+  if (!isByokAllowed()) {
+    throw createHttpError(400, 'MODEL_REQUIRED', '请选择管理员配置的模型');
+  }
+  return null;
+}
+
 function validateCreatePayload(body) {
   if (!body || typeof body !== 'object') throw new Error('请求体不能为空');
   if (typeof body.apiKey !== 'string' || body.apiKey.trim().length === 0) throw new Error('缺少 API 密钥');
@@ -1085,19 +1682,21 @@ function validateCreatePayload(body) {
 }
 
 function createTask(body, req) {
+  const resolvedModel = resolveTaskModel(body);
   validateCreatePayload(body);
   const limitConfig = getLimitConfig();
   if (isShuttingDown || isRejectNewTasksEnabled()) {
     throw createHttpError(503, 'SERVER_NOT_ACCEPTING_TASKS', LIMIT_ERROR_MESSAGES.notAcceptingTasks, limitConfig.retryAfterSeconds);
   }
   const source = enforceRateLimit(req, body, limitConfig);
-  enforceQueueCapacity(source, limitConfig);
+  enforceQueueCapacity(source, limitConfig, { kind: 'image', parallelCount: body.parallelCount });
 
   const taskId = randomUUID();
   const now = new Date().toISOString();
   const requestForDb = {
     mode: body.mode,
     source: 'nova',
+    modelConfigId: resolvedModel?.id || '',
     protocol: body.protocol,
     baseUrl: body.baseUrl,
     prompt: body.prompt,
@@ -1116,9 +1715,9 @@ function createTask(body, req) {
   };
   const tx = db.transaction(() => {
     db.prepare(`
-      INSERT INTO tasks (id, status, mode, request_json, created_at)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(taskId, TASK_STATUS.QUEUED, body.mode, JSON.stringify(requestForDb), now);
+      INSERT INTO tasks (id, status, mode, request_json, created_at, user_id)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(taskId, TASK_STATUS.QUEUED, body.mode, JSON.stringify(requestForDb), now, source.userId || null);
     const insertItem = db.prepare(`
       INSERT INTO task_items (task_id, item_index, status, created_at)
       VALUES (?, ?, ?, ?)
@@ -1136,6 +1735,14 @@ function createTask(body, req) {
   // 递增 pending 计数
   if (source.ip) pendingCountByIp.set(source.ip, (pendingCountByIp.get(source.ip) || 0) + 1);
   if (source.apiKeyHash) pendingCountByApiKeyHash.set(source.apiKeyHash, (pendingCountByApiKeyHash.get(source.apiKeyHash) || 0) + 1);
+  if (source.userId) pendingCountByUserId.set(source.userId, (pendingCountByUserId.get(source.userId) || 0) + 1);
+  userSystem.recordUsage({
+    userId: source.userId,
+    kind: 'image',
+    modelId: resolvedModel?.id || '',
+    taskId,
+    status: 'queued',
+  });
   queue.push(taskId);
   broadcastTask(taskId);
   broadcastQueueStatus();
@@ -2012,6 +2619,7 @@ async function runTask(taskId) {
     db.prepare(`
       UPDATE tasks SET status = 'failed', error = ?, completed_at = ?, expires_at = ? WHERE id = ?
     `).run(`任务执行异常: ${message}`, completedAt, expiresAt, taskId);
+    userSystem.updateUsageStatus(taskId, 'failed');
     cleanupTaskRuntimeState(taskId);
     broadcastTask(taskId);
     broadcastQueueStatus();
@@ -2066,10 +2674,12 @@ async function runTaskBody(taskId, task, apiKey) {
     db.prepare(`
       UPDATE tasks SET status = 'completed', result_json = ?, warning = ?, completed_at = ?, expires_at = ? WHERE id = ?
     `).run(JSON.stringify({ images }), warning, completedAt, expiresAt, taskId);
+    userSystem.updateUsageStatus(taskId, 'completed');
   } else {
     db.prepare(`
       UPDATE tasks SET status = 'failed', error = ?, completed_at = ?, expires_at = ? WHERE id = ?
     `).run(`所有图片生成失败: ${errors.join('; ')}`, completedAt, expiresAt, taskId);
+    userSystem.updateUsageStatus(taskId, 'failed');
   }
   cleanupTaskRuntimeState(taskId);
   broadcastTask(taskId);
@@ -2092,11 +2702,26 @@ function sleep(ms) {
  */
 function createPluginTask(body, req) {
   if (!body || typeof body !== 'object') throw new Error('请求体不能为空');
-  if (typeof body.apiKey !== 'string' || body.apiKey.trim().length === 0) throw new Error('缺少 API 密钥');
 
   const plugin = pluginRegistry.getPlugin(body.pluginId);
   if (!plugin) {
     throw createHttpError(404, 'PLUGIN_NOT_FOUND', `插件 ${body.pluginId || ''} 未安装或加载失败`);
+  }
+
+  // 凭据优先级：管理员统一配置 > 用户自带（仅 allowByok 开启时）
+  let serverCredential = null;
+  try {
+    serverCredential = userSystem.getPluginCredential(plugin.id);
+  } catch {
+    /* 凭据解密失败时按未配置处理 */
+  }
+  let apiKey = serverCredential?.apiKey || '';
+  if (!apiKey) {
+    if (!isByokAllowed()) {
+      throw createHttpError(400, 'PLUGIN_CREDENTIAL_REQUIRED', `管理员尚未配置插件「${plugin.manifest.name || plugin.id}」的 API Key`);
+    }
+    if (typeof body.apiKey !== 'string' || body.apiKey.trim().length === 0) throw new Error('缺少 API 密钥');
+    apiKey = body.apiKey;
   }
 
   // 权威校验：前端也做同一套判断，但那只是为了即时反馈
@@ -2110,7 +2735,10 @@ function createPluginTask(body, req) {
     throw error;
   }
 
-  const baseUrl = normalizeBaseUrl(body.baseUrl) || plugin.manifest.credential.defaultBaseUrl || '';
+  const baseUrl = normalizeBaseUrl(serverCredential?.baseUrl)
+    || normalizeBaseUrl(body.baseUrl)
+    || plugin.manifest.credential.defaultBaseUrl
+    || '';
   if (!baseUrl) {
     throw new Error('缺少 API 基地址，请在设置中填写');
   }
@@ -2121,8 +2749,8 @@ function createPluginTask(body, req) {
   if (isRejectNewTasksEnabled()) {
     throw createHttpError(503, 'SERVER_NOT_ACCEPTING_TASKS', LIMIT_ERROR_MESSAGES.notAcceptingTasks, limitConfig.retryAfterSeconds);
   }
-  const source = enforceRateLimit(req, body, limitConfig);
-  enforceQueueCapacity(source, limitConfig);
+  const source = enforceRateLimit(req, { ...body, apiKey }, limitConfig);
+  enforceQueueCapacity(source, limitConfig, { kind: 'video', parallelCount: 1 });
 
   const taskId = randomUUID();
   const now = new Date().toISOString();
@@ -2138,8 +2766,8 @@ function createPluginTask(body, req) {
   };
 
   db.prepare(`
-    INSERT INTO tasks (id, status, mode, request_json, created_at, expires_at)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO tasks (id, status, mode, request_json, created_at, expires_at, user_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run(
     taskId,
     TASK_STATUS.QUEUED,
@@ -2147,16 +2775,25 @@ function createPluginTask(body, req) {
     JSON.stringify(requestForDb),
     now,
     new Date(Date.now() + TASK_TTL_MS).toISOString(),
+    source.userId || null,
   );
 
   // 素材绑定到任务：此后随任务一起清理，也不再参与去重复用
   pluginMedia.bindToTask(taskId, normalized.mediaUrls);
 
   // apiKey 只留在内存里，从不入库
-  apiKeys.set(taskId, body.apiKey);
+  apiKeys.set(taskId, apiKey);
   taskSources.set(taskId, source);
   if (source.ip) pendingCountByIp.set(source.ip, (pendingCountByIp.get(source.ip) || 0) + 1);
   if (source.apiKeyHash) pendingCountByApiKeyHash.set(source.apiKeyHash, (pendingCountByApiKeyHash.get(source.apiKeyHash) || 0) + 1);
+  if (source.userId) pendingCountByUserId.set(source.userId, (pendingCountByUserId.get(source.userId) || 0) + 1);
+  userSystem.recordUsage({
+    userId: source.userId,
+    kind: 'video',
+    modelId: normalized.model || '',
+    taskId,
+    status: 'queued',
+  });
 
   queue.push(taskId);
   broadcastTask(taskId);
@@ -2172,6 +2809,7 @@ function failPluginTask(taskId, message) {
   db.prepare(`
     UPDATE tasks SET status = 'failed', error = ?, completed_at = ?, expires_at = ? WHERE id = ?
   `).run(message, completedAt, new Date(Date.now() + TASK_TTL_MS).toISOString(), taskId);
+  userSystem.updateUsageStatus(taskId, 'failed');
   pluginTaskCache.delete(taskId);
   deleteTaskImageFiles(taskId);
   pluginMedia.deleteTaskMedia(taskId);
@@ -2216,6 +2854,7 @@ async function pollPluginTaskOnce(taskId, plugin, context) {
         new Date(Date.now() + TASK_TTL_MS).toISOString(),
         taskId,
       );
+    userSystem.updateUsageStatus(taskId, 'completed');
     cachePluginTaskResponse(taskId);
     broadcastTask(taskId);
     return 'completed';
@@ -2282,6 +2921,7 @@ async function runPluginTask(taskId) {
           new Date(Date.now() + TASK_TTL_MS).toISOString(),
           taskId,
         );
+      userSystem.updateUsageStatus(taskId, 'completed');
       pluginTaskProgress.set(taskId, { progress: 100, upstreamStatus: 'completed' });
       cachePluginTaskResponse(taskId);
       cleanupTaskRuntimeState(taskId);
@@ -2543,8 +3183,13 @@ function handleSubscribeTasks(ws, taskIds) {
     if (typeof id !== 'string' || !id) continue;
     // 已达单连接订阅上限且是新 id 时停止，避免无限增长。
     if (!set.has(id) && set.size >= WS_MAX_SUBSCRIPTIONS_PER_SOCKET) break;
-    set.add(id);
     const row = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
+    const wsUser = ws.novaUser;
+    if (row && wsUser?.role !== 'admin' && row.user_id && row.user_id !== wsUser?.id) {
+      safeSendJson(ws, { type: 'error', code: 'FORBIDDEN', message: '无权订阅该任务' });
+      continue;
+    }
+    set.add(id);
     const task = serializeTask(row) || { id, status: 'expired', error: '该任务已超出取回时间' };
     safeSendJson(ws, { type: 'task', task });
     if (task.status === 'completed' || task.status === 'failed' || task.status === 'expired') {
@@ -2753,6 +3398,34 @@ async function handleApi(req, res, pathname, searchParams) {
   try {
     const apiPathname = pathname.replace(/\/+$/, '');
 
+    // 认证路由永远公开：登录页需要在未登录状态下拿到站点名与注册开关。
+    if (apiPathname.startsWith('/api/nova/auth/')) {
+      return await handleAuthApi(req, res, apiPathname);
+    }
+
+    if (req.method === 'GET' && apiPathname === '/api/nova/health') {
+      sendJson(res, 200, { ok: true, version: (() => {
+        return getAppVersion();
+      })() });
+      return true;
+    }
+
+    // 插件素材必须匿名可读：上游服务按 URL 直接拉取参考素材，没有会话 Cookie。
+    const isPluginMediaRead = (req.method === 'GET' || req.method === 'HEAD')
+      && apiPathname.startsWith('/api/nova/plugin-media/');
+
+    if (!isPluginMediaRead) {
+      const currentUser = requireUser(req, res);
+      if (!currentUser) return true;
+      if (apiPathname.startsWith('/api/nova/admin/')) {
+        if (currentUser.role !== 'admin') {
+          sendJson(res, 403, { error: '需要管理员权限', code: 'FORBIDDEN' });
+          return true;
+        }
+        return await handleAdminApi(req, res, apiPathname, searchParams, currentUser);
+      }
+    }
+
     if (req.method === 'GET' && apiPathname === '/api/nova/queue-status') {
       sendJson(res, 200, getQueueStats());
       return true;
@@ -2800,6 +3473,9 @@ async function handleApi(req, res, pathname, searchParams) {
         {
           promptGalleryMode: mode,
           promptGalleryPasswordEnabled: String(env.PROMPT_GALLERY_PASSWORD || '').trim().length > 0,
+          serverMode: true,
+          cdpEnabled: CDP_ENABLED,
+          ...getPublicSettingsWithMode(),
         },
         {
           'Cache-Control': 'no-store, no-cache, must-revalidate',
@@ -2807,6 +3483,19 @@ async function handleApi(req, res, pathname, searchParams) {
           'Expires': '0',
         },
       );
+      return true;
+    }
+
+    // ===== 服务端模型目录（用户侧只读） =====
+    if (req.method === 'GET' && apiPathname === '/api/nova/models') {
+      const models = userSystem.getPublicModels();
+      sendJson(res, 200, { ...models, settings: getPublicSettingsWithMode() });
+      return true;
+    }
+
+    // ===== 个人用量与配额 =====
+    if (req.method === 'GET' && apiPathname === '/api/nova/me/usage') {
+      sendJson(res, 200, userSystem.getMyUsage(req.novaUser.id));
       return true;
     }
 
@@ -2833,6 +3522,7 @@ async function handleApi(req, res, pathname, searchParams) {
         sendJson(res, 400, { error: 'Invalid taskId' });
         return true;
       }
+      if (!assertTaskAccess(req, res, taskId)) return true;
       try {
         if (!fs.existsSync(IMAGE_DIR)) {
           sendJson(res, 404, { error: 'Not Found' });
@@ -2883,8 +3573,22 @@ async function handleApi(req, res, pathname, searchParams) {
     // 前端已在模型选择器层过滤（见 isSliceCapableImageModel），这里再兜一次。
     if (req.method === 'POST' && apiPathname === '/api/nova/proxy/image-edit') {
       try {
-        const baseUrl = req.headers['x-nova-base-url'];
-        const apiKey = req.headers['x-nova-api-key'];
+        const modelConfigId = String(firstHeaderValue(req.headers['x-nova-model-config-id']) || '').trim();
+        let baseUrl = req.headers['x-nova-base-url'];
+        let apiKey = req.headers['x-nova-api-key'];
+        let resolvedModel = null;
+        if (modelConfigId) {
+          resolvedModel = userSystem.resolveModel(modelConfigId, 'image');
+          if (resolvedModel.protocol !== 'openai') {
+            sendJson(res, 400, { error: '图片编辑仅支持 OpenAI 协议的图片模型' });
+            return true;
+          }
+          baseUrl = resolvedModel.baseUrl;
+          apiKey = resolvedModel.apiKey;
+        } else if (!isByokAllowed()) {
+          sendJson(res, 400, { error: '请选择管理员配置的图片编辑模型', code: 'MODEL_REQUIRED' });
+          return true;
+        }
         if (!baseUrl || !apiKey) {
           sendJson(res, 400, { error: 'Missing x-nova-base-url or x-nova-api-key' });
           return true;
@@ -2896,6 +3600,7 @@ async function handleApi(req, res, pathname, searchParams) {
           return true;
         }
 
+        userSystem.checkQuota(req.novaUser.id, 'image-edit', { parallelCount: 1 });
         const rawBody = await readRawBody(req, MAX_IMAGE_EDIT_BODY_BYTES);
         const normalizedBaseUrl = normalizeProtocolBaseUrl('openai', String(baseUrl));
 
@@ -2906,6 +3611,12 @@ async function handleApi(req, res, pathname, searchParams) {
             'Authorization': `Bearer ${apiKey}`,
           },
           body: rawBody,
+        });
+        userSystem.recordUsage({
+          userId: req.novaUser.id,
+          kind: 'image-edit',
+          modelId: resolvedModel?.id || '',
+          status: upstream.ok ? 'completed' : 'failed',
         });
 
         // 响应可能是 JSON（b64_json / url）也可能是图片字节，一律按原样回传，
@@ -2919,7 +3630,9 @@ async function handleApi(req, res, pathname, searchParams) {
         });
         res.end(buffer);
       } catch (error) {
-        if (error && error.statusCode === 413) {
+        if (error instanceof UserSystemError) {
+          sendUserError(res, error);
+        } else if (error && error.statusCode === 413) {
           sendJson(res, 413, { error: error.message });
         } else if (error && error.message && /abort|timeout/i.test(error.message)) {
           sendJson(res, 504, { error: '图片编辑请求上游超时' });
@@ -2934,11 +3647,24 @@ async function handleApi(req, res, pathname, searchParams) {
     if (req.method === 'POST' && apiPathname === '/api/nova/proxy/text') {
       try {
         const body = await readJsonBody(req);
-        const { protocol, baseUrl, apiKey, model, stream, requestBody } = body;
+        let { protocol, baseUrl, apiKey, model } = body;
+        const { stream, requestBody } = body;
+        let resolvedModel = null;
+        if (body.modelConfigId) {
+          resolvedModel = userSystem.resolveModel(String(body.modelConfigId), 'text');
+          protocol = resolvedModel.protocol;
+          baseUrl = resolvedModel.baseUrl;
+          apiKey = resolvedModel.apiKey;
+          model = resolvedModel.upstreamId;
+        } else if (!isByokAllowed()) {
+          sendJson(res, 400, { error: '请选择管理员配置的文本模型', code: 'MODEL_REQUIRED' });
+          return true;
+        }
         if (!baseUrl || !apiKey) {
           sendJson(res, 400, { error: 'Missing baseUrl or apiKey' });
           return true;
         }
+        userSystem.checkQuota(req.novaUser.id, 'text', { parallelCount: 1 });
 
         const normalizedBaseUrl = normalizeProtocolBaseUrl(protocol, baseUrl);
         let targetUrl;
@@ -2977,6 +3703,7 @@ async function handleApi(req, res, pathname, searchParams) {
           delete clean.model;
           delete clean.stream;
           delete clean.requestBody;
+          delete clean.modelConfigId;
           forwardedBody = clean;
         }
 
@@ -2987,6 +3714,12 @@ async function handleApi(req, res, pathname, searchParams) {
         });
 
         if (stream && upstream.ok) {
+          userSystem.recordUsage({
+            userId: req.novaUser.id,
+            kind: 'text',
+            modelId: resolvedModel?.id || '',
+            status: 'completed',
+          });
           res.writeHead(upstream.status, {
             'Content-Type': 'text/event-stream',
             'Cache-Control': 'no-cache',
@@ -3008,9 +3741,17 @@ async function handleApi(req, res, pathname, searchParams) {
 
         let data = null;
         try { data = await upstream.json(); } catch { /* ignore */ }
+        userSystem.recordUsage({
+          userId: req.novaUser.id,
+          kind: 'text',
+          modelId: resolvedModel?.id || '',
+          status: upstream.ok ? 'completed' : 'failed',
+        });
         sendJson(res, upstream.status, data || { error: `上游返回 ${upstream.status}` });
       } catch (error) {
-        if (error && error.message && /abort|timeout/i.test(error.message)) {
+        if (error instanceof UserSystemError) {
+          sendUserError(res, error);
+        } else if (error && error.message && /abort|timeout/i.test(error.message)) {
           sendJson(res, 504, { error: '代理请求上游超时' });
         } else {
           sendJson(res, 502, { error: normalizeError(error) });
@@ -3028,11 +3769,29 @@ async function handleApi(req, res, pathname, searchParams) {
         let baseUrl = headerBaseUrl || parsed.searchParams.get('baseUrl');
         let apiKey = headerApiKey || parsed.searchParams.get('apiKey');
         let protocol = parsed.searchParams.get('protocol') || 'openai';
+        let providerId = '';
         if (req.method === 'POST') {
           const body = await readJsonBody(req);
           baseUrl = body.baseUrl || headerBaseUrl || baseUrl;
           apiKey = body.apiKey || headerApiKey || apiKey;
           protocol = body.protocol || protocol;
+          providerId = String(body.providerId || '');
+        }
+        // 管理员可以直接用已保存的供应商凭据检查连通性。
+        if (providerId) {
+          if (req.novaUser.role !== 'admin') {
+            sendJson(res, 403, { error: '需要管理员权限', code: 'FORBIDDEN' });
+            return true;
+          }
+          const provider = userSystem.getProviderSecret(providerId);
+          baseUrl = provider.baseUrl;
+          apiKey = provider.apiKey;
+          protocol = provider.kind === 'google' ? 'google'
+            : provider.kind === 'anthropic-messages' ? 'anthropic-messages'
+              : 'openai';
+        } else if (!isByokAllowed()) {
+          sendJson(res, 403, { error: '管理员未开放自带密钥模式', code: 'BYOK_DISABLED' });
+          return true;
         }
         if (!baseUrl || !apiKey) {
           sendJson(res, 400, { error: 'Missing baseUrl or apiKey' });
@@ -3430,9 +4189,22 @@ async function handleApi(req, res, pathname, searchParams) {
     if (req.method === 'GET' && apiPathname === '/api/nova/plugins') {
       // ?reload=1 重新扫描插件目录，供管理员放完插件后免重启生效。
       // 代价只是读几个小 JSON 文件，因此不额外设限。
-      if (searchParams?.get('reload') === '1') pluginRegistry.reload();
+      if (searchParams?.get('reload') === '1') {
+        if (req.novaUser.role !== 'admin') {
+          sendJson(res, 403, { error: '只有管理员可以重新扫描插件目录', code: 'FORBIDDEN' });
+          return true;
+        }
+        pluginRegistry.reload();
+      }
+      const credentials = userSystem.listPluginCredentialStatus();
+      const registry = pluginRegistry.describeRegistryForClient();
       sendJson(res, 200, {
-        ...pluginRegistry.describeRegistryForClient(),
+        ...registry,
+        plugins: registry.plugins.map(plugin => ({
+          ...plugin,
+          credentialConfigured: Boolean(credentials[plugin.id]?.configured),
+        })),
+        allowByok: isByokAllowed(),
         mediaLimits: pluginMedia.getLimitsForClient(),
       });
       return true;
@@ -3470,12 +4242,14 @@ async function handleApi(req, res, pathname, searchParams) {
       const pluginAction = pluginTaskMatch[2];
 
       if (req.method === 'GET' && !pluginAction) {
+        if (!assertTaskAccess(req, res, pluginTaskId)) return true;
         const task = await getPluginTaskForClient(pluginTaskId);
         sendJson(res, task ? 200 : 404, task || { id: pluginTaskId, status: 'expired', error: '该任务已超出取回时间' });
         return true;
       }
 
       if (req.method === 'POST' && pluginAction === 'ack') {
+        if (!assertTaskAccess(req, res, pluginTaskId)) return true;
         ackTask(res, pluginTaskId);
         return true;
       }
@@ -3487,12 +4261,14 @@ async function handleApi(req, res, pathname, searchParams) {
     const action = match[2];
 
     if (req.method === 'GET' && !action) {
+      if (!assertTaskAccess(req, res, taskId)) return true;
       const task = serializeTask(db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId));
       sendJson(res, task ? 200 : 404, task || { id: taskId, status: 'expired', error: '该任务已超出取回时间' });
       return true;
     }
 
     if (req.method === 'POST' && action === 'ack') {
+      if (!assertTaskAccess(req, res, taskId)) return true;
       ackTask(res, taskId);
       return true;
     }
@@ -3503,7 +4279,7 @@ async function handleApi(req, res, pathname, searchParams) {
     if (isHttpError(error)) {
       sendHttpError(res, error);
     } else if (error && typeof error.statusCode === 'number') {
-      sendJson(res, error.statusCode, { error: normalizeError(error) });
+      sendJson(res, error.statusCode, { error: normalizeError(error), code: error.code });
     } else {
       sendJson(res, 400, { error: normalizeError(error) });
     }
@@ -3521,6 +4297,7 @@ pluginRegistry.listPlugins();
 setInterval(cleanupExpiredTasks, CLEANUP_INTERVAL_MS).unref();
 setInterval(() => pluginMedia.cleanupExpired(), CLEANUP_INTERVAL_MS).unref();
 setInterval(cleanupRateLimitBuckets, CLEANUP_INTERVAL_MS).unref();
+setInterval(() => userSystem.cleanupSessions(), CLEANUP_INTERVAL_MS).unref();
 
 const startServer = () => {
   const wss = setupWebSocketServer();
@@ -3552,7 +4329,18 @@ const startServer = () => {
       return;
     }
     if (pathname === '/api/nova/ws') {
-      wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws, req));
+      const wsUser = authenticateRequest(req);
+      if (!wsUser) {
+        try {
+          socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
+        } catch { /* ignore */ }
+        socket.destroy();
+        return;
+      }
+      wss.handleUpgrade(req, socket, head, ws => {
+        ws.novaUser = wsUser;
+        wss.emit('connection', ws, req);
+      });
       return;
     }
     if (nextUpgradeHandler) {

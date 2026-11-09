@@ -48,6 +48,8 @@ export interface AgentCatalogEntry {
 
 export interface StreamAgentInput {
   apiKey: string;
+  /** 服务端托管密钥模式：后端据此解析真实凭据。 */
+  modelConfigId?: string;
   model: string;
   protocol: TextProviderProtocol;
   history: AgentMessage[];
@@ -802,6 +804,7 @@ async function streamAgentRound(
       protocol: input.protocol,
       baseUrl,
       apiKey: input.apiKey,
+      ...(input.modelConfigId ? { modelConfigId: input.modelConfigId } : {}),
       model: input.model,
       stream: true,
       requestBody: body,
@@ -855,9 +858,10 @@ export async function describeImage(
   imageDataUrl: string,
   signal?: AbortSignal,
   baseUrl: string = '',
+  modelConfigId: string = '',
 ): Promise<string> {
   return runAgentRequestWithRetry(
-    attemptSignal => requestImageDescription(baseUrl, apiKey, model, protocol, imageDataUrl, attemptSignal),
+    attemptSignal => requestImageDescription(baseUrl, apiKey, model, protocol, imageDataUrl, attemptSignal, modelConfigId),
     signal,
     AGENT_IMAGE_DESCRIBE_ATTEMPT_TIMEOUT_MS,
   );
@@ -870,6 +874,7 @@ async function requestImageDescription(
   protocol: TextProviderProtocol,
   imageDataUrl: string,
   signal: AbortSignal,
+  modelConfigId: string = '',
 ): Promise<string> {
   const body = buildSimpleProxyTextRequestBody(
     protocol,
@@ -888,6 +893,7 @@ async function requestImageDescription(
       protocol,
       baseUrl,
       apiKey,
+      ...(modelConfigId ? { modelConfigId } : {}),
       model,
       stream: false,
       requestBody: body,

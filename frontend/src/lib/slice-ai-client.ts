@@ -48,6 +48,7 @@ async function postImageEdit(
     headers: {
       'x-nova-base-url': model.baseUrl,
       'x-nova-api-key': model.apiKey,
+      'x-nova-model-config-id': model.id,
     },
     body: formData,
     signal,
@@ -263,6 +264,7 @@ export async function requestSliceDecomposition(params: {
       protocol,
       baseUrl: textModel.baseUrl,
       apiKey: textModel.apiKey,
+      modelConfigId: textModel.configId,
       model: textModel.modelId,
       stream: true,
       requestBody: buildNovaAgentRequestBody({
@@ -720,6 +722,7 @@ export async function requestAiSvg(params: {
       protocol,
       baseUrl: textModel.baseUrl,
       apiKey: textModel.apiKey,
+      modelConfigId: textModel.configId,
       model: textModel.modelId,
       stream: true,
       requestBody: buildNovaAgentRequestBody({

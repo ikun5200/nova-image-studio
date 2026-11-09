@@ -37,6 +37,8 @@ export interface CreateNovaTaskInput {
   apiKey: string;
   baseUrl: string;
   protocol: ProviderProtocol;
+  /** 服务端托管密钥模式下传模型配置 ID，后端据此解析真实凭据。 */
+  modelConfigId?: string;
   mode: NovaTaskMode;
   prompt: string;
   outputSize: OutputSize;
@@ -304,7 +306,13 @@ export async function checkModelsAvailability(
   }
 }
 
-export function resolveImageTaskProvider(modelId: string): { apiKey: string; baseUrl: string; protocol: ProviderProtocol; modelId: string } {
+export function resolveImageTaskProvider(modelId: string): {
+  apiKey: string;
+  baseUrl: string;
+  protocol: ProviderProtocol;
+  modelId: string;
+  modelConfigId: string;
+} {
   const registry = loadRegistry();
   const model = getImageModelById(registry, modelId);
   if (!model) throw new Error(`未找到图片模型配置: ${modelId}`);
@@ -314,10 +322,16 @@ export function resolveImageTaskProvider(modelId: string): { apiKey: string; bas
     baseUrl: normalizedBaseUrl,
     protocol: model.protocol,
     modelId: model.modelId,
+    modelConfigId: model.id,
   };
 }
 
-export function resolveTextTaskProvider(modelId: string): { apiKey: string; baseUrl: string; protocol: TextProviderProtocol } {
+export function resolveTextTaskProvider(modelId: string): {
+  apiKey: string;
+  baseUrl: string;
+  protocol: TextProviderProtocol;
+  modelConfigId: string;
+} {
   const registry = loadRegistry();
   const model = getTextModelById(registry, modelId);
   if (!model) throw new Error(`未找到文本模型配置: ${modelId}`);
@@ -326,6 +340,7 @@ export function resolveTextTaskProvider(modelId: string): { apiKey: string; base
     apiKey: model.apiKey,
     baseUrl: normalizedBaseUrl,
     protocol: model.protocol,
+    modelConfigId: model.id,
   };
 }
 

@@ -24,6 +24,8 @@ import type { TextProviderProtocol } from '@/lib/nova-text-protocol';
 
 /** 切图用到的文本模型（AI 拆图 / 网页复刻 / AI 重绘 SVG）。 */
 export interface SliceTextModel {
+  /** registry 条目 id；服务端托管密钥模式下用于让后端解析真实凭据 */
+  configId: string;
   protocol: TextProviderProtocol;
   /** 上游模型 ID（发给供应商的那个），不是 registry 条目 id */
   modelId: string;
@@ -64,6 +66,7 @@ export function requireSliceTextModel(task: SliceTextTask): SliceTextModel {
     );
   }
   return {
+    configId: configured.id,
     protocol: configured.protocol,
     modelId: configured.modelId,
     apiKey: configured.apiKey,

@@ -119,6 +119,7 @@ beforeEach(() => {
     baseUrl: 'https://api.openai.com',
     protocol: 'openai',
     modelId: 'gpt-image-2',
+    modelConfigId: 'model-gpt-image-2',
   });
 });
 
@@ -161,6 +162,7 @@ describe('submitTextToImage', () => {
       baseUrl: 'https://example.test',
       protocol: 'openai',
       modelId: 'gemini-3.1-flash-image',
+      modelConfigId: 'model-gemini-image',
     });
     saveRegistry({
       imageModels: [{
@@ -227,7 +229,7 @@ describe('submitImageToImage markup', () => {
     });
     syncDynamicModelExports();
     mockedResolveImageTaskProvider.mockReturnValue({ apiKey: 'test-api-key', baseUrl: 'https://example.test',
-      protocol: 'openai', modelId: 'gpt-image-2.6-flare' });
+      protocol: 'openai', modelId: 'gpt-image-2.6-flare', modelConfigId: 'model-gpt-image-2.6' });
     const { actions } = createActions(makeJob());
     const markup = { referenceId: matching ? 'first' : 'other', dataUrl: 'data:image/png;base64,b3ZlcmxheQ==' };
     await submitImageToImage({

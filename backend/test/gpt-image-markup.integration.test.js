@@ -68,6 +68,7 @@ test('standard GPT Image models preserve full quality and send independent marku
     cwd: path.resolve(__dirname, '..'),
     env: { ...process.env, NODE_ENV: 'production', HOSTNAME: '127.0.0.1', PORT: String(backendPort),
       NOVA_TASK_DB: path.join(temp, 'tasks.sqlite'), NOVA_IMAGE_DIR: path.join(temp, 'images'),
+      NOVA_AUTH_DISABLED: 'true',
       NOVA_IMAGE_STREAM: 'false', NOVA_RATE_LIMIT_MAX_REQUESTS_PER_IP: '10000', NOVA_RATE_LIMIT_MAX_REQUESTS_PER_API_KEY: '10000' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
