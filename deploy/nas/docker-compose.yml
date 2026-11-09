@@ -1,0 +1,18 @@
+services:
+  nova-image-studio:
+    image: ghcr.io/ikun5200/nova-image-studio:latest
+    container_name: nova-image-studio
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      NOVA_TASK_DB: backend/data/nova-tasks.sqlite
+      NOVA_IMAGE_DIR: backend/data/nova-images
+    volumes:
+      - ./data:/app/backend/data
+      # 如需自定义视频插件，取消下一行注释，并先把镜像内置插件复制到 ./plugins：
+      # docker run --rm --entrypoint sh ghcr.io/ikun5200/nova-image-studio:latest -c 'cp -r /app/backend/plugins/. /tmp/plugins/'
+      # - ./plugins:/app/backend/plugins
+    restart: unless-stopped
