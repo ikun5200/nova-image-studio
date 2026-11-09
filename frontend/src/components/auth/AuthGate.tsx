@@ -15,6 +15,7 @@ import {
 import { fetchServerModels, hydrateServerModels, clearServerModels } from '@/lib/server-models';
 import { SessionProvider } from '@/lib/session-context';
 import { saveSessionSnapshot, clearSessionSnapshot } from '@/lib/session-store';
+import { syncDynamicModelExports } from '@/lib/gemini-config';
 
 type GateState =
   | { status: 'loading' }
@@ -51,6 +52,9 @@ export function AuthGate({ children }: { children: ReactNode }) {
         try {
           const models = await fetchServerModels();
           hydrateServerModels(models);
+          // 让生图工作台等使用动态导出的模型选项立即拿到服务端目录。
+          syncDynamicModelExports();
+          window.dispatchEvent(new Event('nova-model-registry-updated'));
         } catch (error) {
           console.warn('[auth] 读取服务端模型目录失败', error);
         }

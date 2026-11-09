@@ -536,6 +536,14 @@ const pluginMedia = createMediaStore({
   createHttpError,
   getClientIp,
   normalizeBaseUrl,
+  // 管理员后台配置的公开地址优先于环境变量，改完无需重启。
+  getConfiguredPublicBaseUrl: () => {
+    try {
+      return userSystem.getSettings().publicBaseUrl || '';
+    } catch {
+      return '';
+    }
+  },
 });
 
 function cleanupTaskRuntimeState(taskId) {

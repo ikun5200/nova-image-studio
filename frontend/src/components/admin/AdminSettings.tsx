@@ -69,6 +69,7 @@ export function AdminSettings() {
     try {
       const next = await saveSettings({
         siteName: settings.siteName,
+        publicBaseUrl: settings.publicBaseUrl,
         registrationEnabled: settings.registrationEnabled,
         allowByok: settings.allowByok,
         allowUserModelOverride: settings.allowUserModelOverride,
@@ -123,6 +124,27 @@ export function AdminSettings() {
           />
         </Field>
       </div>
+
+      <Field
+        label="公开访问地址"
+        hint="视频插件的参考素材会用这个地址交给上游拉取。局域网可填 http://192.168.31.88:3030，外网填 https://你的域名。留空时回退到 NOVA_PUBLIC_BASE_URL，再回退到请求 Host。"
+      >
+        <div className="flex gap-2">
+          <Input
+            value={settings.publicBaseUrl || ''}
+            onChange={event => setSettings(prev => prev ? { ...prev, publicBaseUrl: event.target.value } : prev)}
+            placeholder="http://192.168.31.88:3030"
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            className="shrink-0"
+            onClick={() => setSettings(prev => prev ? { ...prev, publicBaseUrl: window.location.origin } : prev)}
+          >
+            使用当前地址
+          </Button>
+        </div>
+      </Field>
 
       <Field label="站点公告" hint="留空则不显示。公告会出现在工作台顶部。">
         <Textarea

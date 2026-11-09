@@ -54,7 +54,15 @@ const MEDIA_URL_PREFIX = '/api/nova/plugin-media/';
 /**
  * @param {object} deps 宿主注入的依赖，避免这个模块反过来 require server.js
  */
-function createMediaStore({ db, getRuntimeEnv, parseIntegerEnv, createHttpError, getClientIp, normalizeBaseUrl }) {
+function createMediaStore({
+  db,
+  getRuntimeEnv,
+  parseIntegerEnv,
+  createHttpError,
+  getClientIp,
+  normalizeBaseUrl,
+  getConfiguredPublicBaseUrl,
+}) {
   const MEDIA_DIR = process.env.NOVA_PLUGIN_MEDIA_DIR
     || path.join(__dirname, '..', 'data', 'plugin-media');
   const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000;
@@ -125,9 +133,19 @@ function createMediaStore({ db, getRuntimeEnv, parseIntegerEnv, createHttpError,
     if (!fs.existsSync(MEDIA_DIR)) fs.mkdirSync(MEDIA_DIR, { recursive: true });
   }
 
-  /** 优先用显式配置的公网地址；否则按反代头 / Host 头推断。 */
+  /**
+   * 优先级：管理员后台设置 > 环境变量 > 反代头 / Host 头推断。
+   * 后台设置是热生效的，上传下一个素材时就会用新地址。
+   */
   function resolvePublicBaseUrl(req) {
-    const configured = normalizeBaseUrl(getRuntimeEnv().NOVA_PUBLIC_BASE_URL);
+    let adminConfigured = '';
+    try {
+      adminConfigured = getConfiguredPublicBaseUrl ? getConfiguredPublicBaseUrl() : '';
+    } catch {
+      adminConfigured = '';
+    }
+    const configured = normalizeBaseUrl(adminConfigured)
+      || normalizeBaseUrl(getRuntimeEnv().NOVA_PUBLIC_BASE_URL);
     if (configured) return configured;
     const forwardedProto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
     const forwardedHost = String(req.headers['x-forwarded-host'] || '').split(',')[0].trim();

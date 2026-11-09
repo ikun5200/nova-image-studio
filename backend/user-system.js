@@ -80,6 +80,8 @@ const DEFAULT_USER_QUOTA = {
 
 const DEFAULT_SETTINGS = {
   siteName: 'Nova Studio',
+  /** 视频插件参考素材的公网地址；为空时回退到环境变量，再回退到请求 Host。 */
+  publicBaseUrl: '',
   registrationEnabled: false,
   allowByok: false,
   allowUserModelOverride: true,
@@ -481,6 +483,7 @@ function createUserSystem({ db, dataDir }) {
     settings.sessionDays = clampInt(settings.sessionDays, 1, 365, 30);
     settings.siteName = String(settings.siteName || 'Nova Studio').slice(0, 80);
     settings.announcement = String(settings.announcement || '').slice(0, 2000);
+    settings.publicBaseUrl = String(settings.publicBaseUrl || '').trim().replace(/\/+$/, '').slice(0, 500);
     return settings;
   }
 
@@ -526,6 +529,13 @@ function createUserSystem({ db, dataDir }) {
     if (patch.allowByok !== undefined) next.allowByok = Boolean(patch.allowByok);
     if (patch.allowUserModelOverride !== undefined) next.allowUserModelOverride = Boolean(patch.allowUserModelOverride);
     if (patch.announcement !== undefined) next.announcement = String(patch.announcement || '').slice(0, 2000);
+    if (patch.publicBaseUrl !== undefined) {
+      const value = String(patch.publicBaseUrl || '').trim().replace(/\/+$/, '');
+      if (value && !/^https?:\/\//i.test(value)) {
+        throw new UserSystemError(400, 'INVALID_PUBLIC_BASE_URL', '公开访问地址必须是 http:// 或 https:// 开头的地址');
+      }
+      next.publicBaseUrl = value.slice(0, 500);
+    }
     if (patch.sessionDays !== undefined) next.sessionDays = clampInt(patch.sessionDays, 1, 365, current.sessionDays);
     if (patch.defaultUserQuota !== undefined) {
       next.defaultUserQuota = normalizeQuota(patch.defaultUserQuota, current.defaultUserQuota);
@@ -533,7 +543,7 @@ function createUserSystem({ db, dataDir }) {
     if (patch.modelDefaults !== undefined) {
       next.modelDefaults = normalizeModelDefaults(patch.modelDefaults);
     }
-    for (const key of ['siteName', 'registrationEnabled', 'allowByok', 'allowUserModelOverride', 'announcement', 'sessionDays', 'defaultUserQuota', 'modelDefaults']) {
+    for (const key of ['siteName', 'publicBaseUrl', 'registrationEnabled', 'allowByok', 'allowUserModelOverride', 'announcement', 'sessionDays', 'defaultUserQuota', 'modelDefaults']) {
       writeSetting(key, next[key]);
     }
     return next;

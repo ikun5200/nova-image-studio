@@ -220,6 +220,22 @@ test('多用户鉴权、管理员配置与模型密钥服务端解析', { timeou
   assert.equal(usage.response.status, 200);
   assert.equal(usage.data.today.text, 1);
 
+  // 管理员可以在后台设置公开访问地址，非法地址应被拒绝
+  const settingsUpdate = await request(baseUrl, '/api/nova/admin/settings', {
+    method: 'PUT',
+    cookie: adminCookie,
+    body: { settings: { publicBaseUrl: 'http://192.168.31.88:3030/' } },
+  });
+  assert.equal(settingsUpdate.response.status, 200, JSON.stringify(settingsUpdate.data));
+  assert.equal(settingsUpdate.data.settings.publicBaseUrl, 'http://192.168.31.88:3030');
+
+  const invalidSettings = await request(baseUrl, '/api/nova/admin/settings', {
+    method: 'PUT',
+    cookie: adminCookie,
+    body: { settings: { publicBaseUrl: 'not-a-url' } },
+  });
+  assert.equal(invalidSettings.response.status, 400);
+
   // 停用用户后，其会话应立即失效
   await request(baseUrl, `/api/nova/admin/users/${createdUser.data.user.id}`, {
     method: 'PATCH',
