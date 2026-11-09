@@ -1521,6 +1521,25 @@ function pipeFileToResponse(res, filePath, statusCode, headers) {
   stream.pipe(res);
 }
 
+/**
+ * 静态资源缓存策略：
+ * - HTML 必须每次回源校验，否则容器更新后浏览器会拿着旧 HTML 去请求已不存在的
+ *   旧 chunk，页面直接白屏（登录页最容易撞上）。
+ * - /_next/static/ 下是带哈希的构建产物，可以长缓存。
+ */
+function buildStaticHeaders(filePath, normalizedPath) {
+  const headers = { 'Content-Type': getContentType(filePath) };
+  const isHtml = /\.html?$/i.test(filePath);
+  if (isHtml) {
+    headers['Cache-Control'] = 'no-cache, no-store, must-revalidate';
+    headers['Pragma'] = 'no-cache';
+    headers['Expires'] = '0';
+  } else if (normalizedPath.startsWith('/_next/static/')) {
+    headers['Cache-Control'] = 'public, max-age=31536000, immutable';
+  }
+  return headers;
+}
+
 function serveStatic(req, res, pathname) {
   if (!fs.existsSync(STATIC_DIR)) return false;
   let decodedPath;
@@ -1547,13 +1566,16 @@ function serveStatic(req, res, pathname) {
     const resolved = path.resolve(candidate);
     if (!resolved.startsWith(staticDirResolved) && resolved !== staticDirResolved.slice(0, -1)) continue;
     if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) continue;
-    pipeFileToResponse(res, resolved, 200, { 'Content-Type': getContentType(resolved) });
+    pipeFileToResponse(res, resolved, 200, buildStaticHeaders(resolved, normalizedPath));
     return true;
   }
 
   const notFound = path.join(STATIC_DIR, '404.html');
   if (fs.existsSync(notFound)) {
-    pipeFileToResponse(res, notFound, 404, { 'Content-Type': 'text/html; charset=utf-8' });
+    pipeFileToResponse(res, notFound, 404, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+    });
     return true;
   }
   return false;
