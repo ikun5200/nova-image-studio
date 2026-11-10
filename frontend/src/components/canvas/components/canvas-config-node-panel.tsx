@@ -176,7 +176,7 @@ export function CanvasConfigNodePanel({
           onChange={onGenerationModeChange ?? noop}
           options={[
             { value: "image", label: "图片", icon: <ImageIcon />, title: "图片生成：走宿主任务队列" },
-            { value: "video", label: "视频", icon: <Film />, title: "视频生成：由已安装的视频插件驱动，按秒计费" },
+            { value: "video", label: "视频", icon: <Film />, title: "视频功能已下线", disabled: true },
           ]}
           className="flex w-full"
           size="sm"

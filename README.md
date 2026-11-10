@@ -23,12 +23,12 @@ Nova Studio is an AI video/image generation workbench for individuals and small 
 **What you get:**
 
 - **Two deployment modes**: multi-user server mode (admin-managed models and keys) or local single-user BYOK mode
-- **Admin console**: users/roles/quota, providers and models, defaults, plugin credentials, tasks, usage stats, site settings, audit log
-- **Key security**: provider and plugin API keys are encrypted at rest with AES-256-GCM and never sent to the browser
+- **Admin console**: users/roles/quota, providers and models, defaults, tasks, usage stats, site settings, audit log
+- **Key security**: provider API keys are encrypted at rest with AES-256-GCM and never sent to the browser
 - **Per-user isolation**: tasks, images and WebSocket subscriptions are scoped to their owner
 - Image models and text models are configured separately, each with its own protocol, base URL and capability settings
 - Text models support Google (`generateContent`) and OpenAI (Responses protocol)
-- **Video generation is fully plugin-based**: the host ships no upstream video protocol at all — capability comes from plugin packs
+- **This fork removes the video workbench, video plugin settings and admin plugin page**; image generation remains fully supported. Backend plugin APIs are kept as dormant compatibility code without frontend entry points.
 
 > Current version: **v3.4.0** (multi-user server edition)
 >

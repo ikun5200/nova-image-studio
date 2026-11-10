@@ -202,7 +202,6 @@ export function AdminDashboard({ onNavigate }: { onNavigate: (section: string) =
               <div className="flex justify-between gap-3"><dt className="text-muted-foreground">运行时长</dt><dd>{formatUptime(data.system.uptimeSeconds)}</dd></div>
               <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Node</dt><dd className="font-mono">{data.system.nodeVersion}</dd></div>
               <div className="flex justify-between gap-3"><dt className="text-muted-foreground">数据库</dt><dd>{formatBytes(data.system.databaseBytes)}</dd></div>
-              <div className="flex justify-between gap-3"><dt className="text-muted-foreground">插件</dt><dd>{data.plugins.installed} 个{data.plugins.failures > 0 ? ` · ${data.plugins.failures} 个失败` : ''}</dd></div>
               <div className="flex justify-between gap-3"><dt className="text-muted-foreground">密钥主密码</dt><dd>{data.system.secretKeyFromEnv ? '环境变量' : '数据目录文件'}</dd></div>
             </dl>
             <p className="mt-3 flex items-start gap-1.5 break-all text-[10px] text-muted-foreground">

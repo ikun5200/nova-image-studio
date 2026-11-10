@@ -13,7 +13,6 @@ describe('WorkspaceModeTabs', () => {
 
     expect(screen.getByRole('tab', { name: /Agent/i })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: /生图工作台/i })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: /视频工作台/i })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: /无限画布/i })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: /UI设计模式/i })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: /我的素材/i })).toBeInTheDocument();
@@ -59,7 +58,7 @@ describe('WorkspaceModeTabs', () => {
       return originalGetBoundingClientRect.apply(this);
     };
 
-    // Mock clientWidth on container to be narrow (e.g. 700px, where 8 tabs * 110px = 880px > 700px)
+    // Mock clientWidth on container to be narrow (e.g. 700px, where 7 tabs * 110px = 770px > 700px)
     let containerWidth = 700;
     Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
       configurable: true,
@@ -86,7 +85,7 @@ describe('WorkspaceModeTabs', () => {
     expect(tabsList).not.toBeNull();
     // Compact mode applies flex + overflow-x-auto without sm:grid
     expect(tabsList?.className).toContain('overflow-x-auto');
-    expect(tabsList?.className).not.toContain('sm:grid-cols-8');
+    expect(tabsList?.className).not.toContain('sm:grid-cols-7');
 
     // Restore methods
     HTMLElement.prototype.getBoundingClientRect = originalGetBoundingClientRect;
@@ -131,7 +130,7 @@ describe('WorkspaceModeTabs', () => {
 
     const tabsList = container.querySelector('[data-slot="tabs-list"]');
     expect(tabsList?.className).toContain('sm:grid');
-    expect(tabsList?.className).toContain('sm:grid-cols-8');
+    expect(tabsList?.className).toContain('sm:grid-cols-7');
 
     HTMLElement.prototype.getBoundingClientRect = originalGetBoundingClientRect;
   });

@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Bot, Film, Frame, Images, LibraryBig, ScanSearch, Scissors, Sparkles, Video } from 'lucide-react';
+import { Bot, Film, Frame, Images, LibraryBig, ScanSearch, Scissors, Sparkles } from 'lucide-react';
 import { TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cn } from '@/lib/utils';
 
@@ -13,8 +13,6 @@ interface WorkspaceModeTabsProps {
 const tabs = [
   { value: 'agent', icon: Bot, label: 'Agent' },
   { value: 'image-generation', icon: Sparkles, label: '生图工作台' },
-  // 视频能力全部来自插件包；没装插件时这个 tab 仍在，里面给出安装引导
-  { value: 'video-generation', icon: Video, label: '视频工作台' },
   { value: 'canvas', icon: Frame, label: '无限画布' },
   { value: 'image-to-slice', icon: Scissors, label: 'UI设计模式' },
   { value: 'assets', icon: Images, label: '我的素材' },
@@ -25,7 +23,7 @@ const tabs = [
 const galleryTab = { value: 'prompt-gallery', icon: LibraryBig, label: '提示词广场' } as const;
 
 export function WorkspaceModeTabs({ wideMode = false, showPromptGallery = false }: WorkspaceModeTabsProps) {
-  const gridCols = showPromptGallery ? 'sm:grid-cols-9' : 'sm:grid-cols-8';
+  const gridCols = showPromptGallery ? 'sm:grid-cols-8' : 'sm:grid-cols-7';
   const allTabs = showPromptGallery ? [...tabs, galleryTab] : tabs;
   const containerRef = useRef<HTMLDivElement>(null);
   const measureRef = useRef<HTMLDivElement>(null);

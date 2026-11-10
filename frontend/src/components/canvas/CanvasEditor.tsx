@@ -290,6 +290,9 @@ async function optimizeImportedPromptContent(prompt: PromptWithKey, referenceIma
   return failed || !content ? { content: original, optimized: false } : { content, optimized: true };
 }
 
+/** 视频生成已下线；保留常量让旧视频节点可查看，但不再发起新的视频任务。 */
+const VIDEO_FEATURES_ENABLED: boolean = false;
+
 export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, showPromptGallery = true }: CanvasEditorProps) {
   const theme = canvasTheme;
   const openProject = useCanvasStore((state) => state.openProject);
@@ -1464,6 +1467,10 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
       // 视频模式分流：走独立的素材上传 + 插件任务链路
       const mode = sourceNode.metadata?.generationMode ?? "image";
       if (mode === "video") {
+        if (!VIDEO_FEATURES_ENABLED) {
+          showToast("视频功能已下线，请使用图片模式", "info");
+          return;
+        }
         void runVideoGeneration(sourceNode);
         return;
       }
@@ -2843,8 +2850,6 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
         interactionMode={interactionMode}
         showPromptGallery={showPromptGallery}
         onAddImage={() => addNode(CanvasNodeType.Image)}
-        onAddVideo={() => addNode(CanvasNodeType.Video)}
-        onAddAudio={() => addNode(CanvasNodeType.Audio)}
         onAddText={() => addNode(CanvasNodeType.Text)}
         onAddAnnotation={() => addNode(CanvasNodeType.TextAnnotation)}
         onAddConfig={() => addNode(CanvasNodeType.Config)}

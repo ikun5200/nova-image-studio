@@ -1,6 +1,6 @@
 "use client";
 
-import { AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignStartHorizontal, AlignStartVertical, BetweenHorizontalStart, BetweenVerticalStart, CircleDot, Columns3, Film, Grid2x2, Hand, Image as ImageIcon, Info, LayoutDashboard, LayoutTemplate, LibraryBig, MousePointer2, Music, Redo2, Rows3, Search, Settings2, SlidersHorizontal, Sparkles, Square, Trash2, Type, Undo2, Workflow } from "lucide-react";
+import { AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignStartHorizontal, AlignStartVertical, BetweenHorizontalStart, BetweenVerticalStart, CircleDot, Columns3, Grid2x2, Hand, Image as ImageIcon, Info, LayoutDashboard, LayoutTemplate, LibraryBig, MousePointer2, Redo2, Rows3, Search, Settings2, SlidersHorizontal, Sparkles, Square, Trash2, Type, Undo2, Workflow } from "lucide-react";
 
 import { Button, buttonVariants } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -22,8 +22,6 @@ type CanvasToolbarProps = {
   interactionMode: CanvasInteractionMode;
   showPromptGallery?: boolean;
   onAddImage: () => void;
-  onAddVideo: () => void;
-  onAddAudio: () => void;
   onAddText: () => void;
   onAddAnnotation: () => void;
   onAddConfig: () => void;
@@ -52,8 +50,6 @@ export function CanvasToolbar({
   interactionMode,
   showPromptGallery = true,
   onAddImage,
-  onAddVideo,
-  onAddAudio,
   onAddText,
   onAddAnnotation,
   onAddConfig,
@@ -92,16 +88,6 @@ export function CanvasToolbar({
       <CanvasTooltip label="添加图片节点">
         <Button variant="ghost" size="icon-sm" onClick={onAddImage} aria-label="添加图片节点">
           <ImageIcon className="size-4" />
-        </Button>
-      </CanvasTooltip>
-      <CanvasTooltip label="添加视频节点（可上传参考视频 / 承接视频生成结果）">
-        <Button variant="ghost" size="icon-sm" onClick={onAddVideo} aria-label="添加视频节点">
-          <Film className="size-4" />
-        </Button>
-      </CanvasTooltip>
-      <CanvasTooltip label="添加音频节点（上传参考音频素材）">
-        <Button variant="ghost" size="icon-sm" onClick={onAddAudio} aria-label="添加音频节点">
-          <Music className="size-4" />
         </Button>
       </CanvasTooltip>
       <CanvasTooltip label="添加文本节点">

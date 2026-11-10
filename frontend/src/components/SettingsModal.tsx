@@ -8,7 +8,6 @@ import {
   ExternalLink,
   ImageIcon,
   Info,
-  Package,
   RefreshCw,
   Save,
   Settings,
@@ -25,7 +24,6 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { PluginsSettings } from '@/components/settings/PluginsSettings';
 import { ServerModelsSettings } from '@/components/settings/ServerModelsSettings';
 import { AccountSettings } from '@/components/settings/AccountSettings';
 import { Button } from '@/components/ui/button';
@@ -56,7 +54,7 @@ import { PROMPT_DATA_SOURCES, getPromptSourceLabel } from '@/lib/prompt-gallery-
 import { isServerMode } from '@/lib/deploy-mode';
 
 /** 设置弹层的页签。调用方可以指定打开时落在哪一页。 */
-export type SettingsTab = 'models' | 'plugins' | 'account' | 'backup' | 'about';
+export type SettingsTab = 'models' | 'account' | 'backup' | 'about';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -330,10 +328,6 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange, initialTab = 'm
               <ImageIcon className="w-4 h-4" />
               模型配置
             </TabsTrigger>
-            <TabsTrigger value="plugins" className="gap-2 rounded-none border-b-2 border-transparent data-active:border-primary data-active:bg-transparent data-active:shadow-none px-4 py-3">
-              <Package className="w-4 h-4" />
-              插件
-            </TabsTrigger>
             <TabsTrigger value="account" className="gap-2 rounded-none border-b-2 border-transparent data-active:border-primary data-active:bg-transparent data-active:shadow-none px-4 py-3">
               <UserRound className="w-4 h-4" />
               账号
@@ -452,10 +446,6 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange, initialTab = 'm
             </div>
             </>
             )}
-          </TabsContent>
-
-          <TabsContent value="plugins" className="min-h-0 overflow-y-auto p-4 sm:p-6 space-y-6 mt-0">
-            <PluginsSettings />
           </TabsContent>
 
           <TabsContent value="account" className="min-h-0 overflow-y-auto p-4 sm:p-6 space-y-6 mt-0">

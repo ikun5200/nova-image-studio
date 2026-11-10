@@ -7,7 +7,6 @@ import {
   LayoutDashboard,
   ListChecks,
   LogOut,
-  Package,
   ScrollText,
   ServerCog,
   Settings,
@@ -24,11 +23,10 @@ import { AdminUsers } from '@/components/admin/AdminUsers';
 import { AdminProviders } from '@/components/admin/AdminProviders';
 import { AdminTasks } from '@/components/admin/AdminTasks';
 import { AdminUsage } from '@/components/admin/AdminUsage';
-import { AdminPlugins } from '@/components/admin/AdminPlugins';
 import { AdminSettings } from '@/components/admin/AdminSettings';
 import { AdminAudit } from '@/components/admin/AdminAudit';
 
-type SectionKey = 'overview' | 'users' | 'providers' | 'tasks' | 'usage' | 'plugins' | 'settings' | 'audit';
+type SectionKey = 'overview' | 'users' | 'providers' | 'tasks' | 'usage' | 'settings' | 'audit';
 
 const NAV_ITEMS: Array<{ key: SectionKey; label: string; icon: LucideIcon }> = [
   { key: 'overview', label: '总览', icon: LayoutDashboard },
@@ -36,7 +34,6 @@ const NAV_ITEMS: Array<{ key: SectionKey; label: string; icon: LucideIcon }> = [
   { key: 'providers', label: '供应商与模型', icon: ServerCog },
   { key: 'tasks', label: '任务', icon: ListChecks },
   { key: 'usage', label: '用量', icon: BarChart3 },
-  { key: 'plugins', label: '插件', icon: Package },
   { key: 'settings', label: '站点设置', icon: Settings },
   { key: 'audit', label: '操作审计', icon: ScrollText },
 ];
@@ -51,7 +48,6 @@ export function AdminApp() {
       case 'providers': return <AdminProviders />;
       case 'tasks': return <AdminTasks />;
       case 'usage': return <AdminUsage />;
-      case 'plugins': return <AdminPlugins />;
       case 'settings': return <AdminSettings />;
       case 'audit': return <AdminAudit />;
       default: return <AdminDashboard onNavigate={key => setSection(key as SectionKey)} />;
