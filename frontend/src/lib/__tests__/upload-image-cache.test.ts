@@ -267,4 +267,17 @@ describe('upload image cache writes', () => {
     expect(result.cacheHit).toBe(false);
     expect([...fake.state.records.keys()]).toEqual([result.id]);
   });
+
+  it('keeps uploads working when SubtleCrypto is unavailable on a plain-http origin', async () => {
+    vi.stubGlobal('crypto', {});
+    const fake = createFakeIndexedDB();
+    vi.stubGlobal('indexedDB', fake.factory);
+    const { prepareUploadImage } = await import('@/lib/upload-image-cache');
+
+    const result = await prepareUploadImage(makeFile('lan.png'));
+
+    expect(result.id).toMatch(/^fallback-[0-9a-f]{16}$/);
+    expect(result.dataUrl).toContain('data:');
+    expect(fake.state.records.has(result.id)).toBe(true);
+  });
 });

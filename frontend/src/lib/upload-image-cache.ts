@@ -147,9 +147,58 @@ function bufferToHex(buffer: ArrayBuffer): string {
         .join('');
 }
 
+const FALLBACK_HASH_FULL_BYTES = 8 * 1024 * 1024;
+const FALLBACK_HASH_SAMPLE_BYTES = 64 * 1024;
+
+function mixHash(seed: number, bytes: Uint8Array): number {
+    let hash = seed >>> 0;
+    for (let index = 0; index < bytes.length; index += 1) {
+        hash = Math.imul(hash ^ bytes[index], 0x01000193) >>> 0;
+    }
+    return hash;
+}
+
+function mixTextHash(seed: number, text: string): number {
+    let hash = seed >>> 0;
+    for (let index = 0; index < text.length; index += 1) {
+        hash = Math.imul(hash ^ text.charCodeAt(index), 0x01000193) >>> 0;
+    }
+    return hash;
+}
+
+// 局域网 HTTP 部署不是安全上下文，没有 SubtleCrypto；缓存键退化为轻量哈希，
+// 大文件只采样首尾，避免在非安全环境下直接抛错导致上传失败。
+async function hashFileFallback(file: File): Promise<string> {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const meta = `${file.name}|${file.type}|${file.size}|${file.lastModified}`;
+    let first: number;
+    let second: number;
+
+    if (bytes.length <= FALLBACK_HASH_FULL_BYTES) {
+        first = mixHash(0x811c9dc5, bytes);
+        second = mixHash(0x9e3779b9, bytes);
+    } else {
+        const head = bytes.subarray(0, FALLBACK_HASH_SAMPLE_BYTES);
+        const tail = bytes.subarray(bytes.length - FALLBACK_HASH_SAMPLE_BYTES);
+        first = mixHash(mixHash(0x811c9dc5, head), tail);
+        second = mixHash(mixHash(0x9e3779b9, tail), head);
+    }
+
+    first = mixTextHash(first, meta);
+    second = mixTextHash(second, meta);
+    return `fallback-${first.toString(16).padStart(8, '0')}${second.toString(16).padStart(8, '0')}`;
+}
+
 async function hashFile(file: File): Promise<string> {
-    const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
-    return bufferToHex(digest);
+    if (typeof crypto !== 'undefined' && crypto.subtle) {
+        try {
+            const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
+            return bufferToHex(digest);
+        } catch {
+            // 例如 http:// 局域网地址下 SubtleCrypto 不可用，继续走本地哈希。
+        }
+    }
+    return hashFileFallback(file);
 }
 
 function readFileAsDataUrl(file: Blob): Promise<string> {
