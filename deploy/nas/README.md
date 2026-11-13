@@ -51,11 +51,16 @@ http://<NAS地址>:3000/
 如果 `.env` 里配置了 `NOVA_ADMIN_USERNAME` / `NOVA_ADMIN_PASSWORD`，直接登录即可；
 否则访问 `http://<NAS地址>:3000/setup/` 创建第一个管理员。
 
+> PWA 安装需要 HTTPS：纯 HTTP 局域网地址下浏览器不会注册 Service Worker。
+> 可在「站点设置 → 公开访问地址」里加入一个 HTTPS 反向代理地址，再从该地址打开
+> 「设置 → 关于 → 安装 Nova Studio」。
+
 登录后点击右上角「管理后台」，先配置：
 
 1. 供应商（Base URL + API Key）
 2. 图片模型 / 文本模型
 3. 全局默认模型
+4. 站点设置（公开访问地址可一行一个；审计/用量保留天数）
 
 然后用户端就能直接使用。
 

@@ -80,16 +80,25 @@ const DEFAULT_USER_QUOTA = {
 
 const DEFAULT_SETTINGS = {
   siteName: 'Nova Studio',
-  /** 视频插件参考素材的公网地址；为空时回退到环境变量，再回退到请求 Host。 */
+  /** 视频插件参考素材的公网地址列表；请求会优先匹配同 Host，未命中时使用第一个。 */
+  publicBaseUrls: [],
+  /** 旧版单地址字段，仅用于兼容旧客户端与旧数据。 */
   publicBaseUrl: '',
   registrationEnabled: false,
   allowByok: false,
   allowUserModelOverride: true,
   announcement: '',
   sessionDays: 30,
+  /** 操作审计保留天数，0 表示永久保留。 */
+  auditRetentionDays: 180,
+  /** 用量记录保留天数，0 表示永久保留。 */
+  usageRetentionDays: 365,
   defaultUserQuota: DEFAULT_USER_QUOTA,
   modelDefaults: DEFAULT_MODEL_DEFAULTS,
 };
+
+const MAX_PUBLIC_BASE_URLS = 10;
+const MAX_RETENTION_DAYS = 3650;
 
 class UserSystemError extends Error {
   constructor(statusCode, code, message) {
@@ -98,6 +107,61 @@ class UserSystemError extends Error {
     this.statusCode = statusCode;
     this.code = code;
   }
+}
+
+function normalizePublicBaseUrl(value) {
+  const normalized = String(value || '').trim().replace(/\/+$/, '');
+  if (!normalized) return '';
+  if (!/^https?:\/\//i.test(normalized)) {
+    throw new UserSystemError(400, 'INVALID_PUBLIC_BASE_URL', '公开访问地址必须是 http:// 或 https:// 开头的地址');
+  }
+  try {
+    const parsed = new URL(normalized);
+    if (!parsed.hostname) throw new Error('missing host');
+  } catch {
+    throw new UserSystemError(400, 'INVALID_PUBLIC_BASE_URL', `公开访问地址格式不正确: ${normalized}`);
+  }
+  return normalized.slice(0, 500);
+}
+
+/** 接受数组，也接受换行/逗号分隔的字符串；逐项校验并去重。 */
+function normalizePublicBaseUrls(value) {
+  const candidates = Array.isArray(value)
+    ? value
+    : String(value || '').split(/[\n,]+/);
+  const seen = new Set();
+  const urls = [];
+  for (const candidate of candidates) {
+    const normalized = normalizePublicBaseUrl(candidate);
+    if (!normalized) continue;
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    urls.push(normalized);
+    if (urls.length >= MAX_PUBLIC_BASE_URLS) break;
+  }
+  return urls;
+}
+
+/** 读取旧数据时宽松处理：非法项直接忽略，避免一条坏配置拖垮整个后台。 */
+function sanitizePublicBaseUrls(stored) {
+  const raw = Array.isArray(stored.publicBaseUrls)
+    ? stored.publicBaseUrls
+    : (stored.publicBaseUrl ? [stored.publicBaseUrl] : []);
+  const seen = new Set();
+  const urls = [];
+  for (const candidate of raw) {
+    try {
+      const normalized = normalizePublicBaseUrl(candidate);
+      if (!normalized || seen.has(normalized.toLowerCase())) continue;
+      seen.add(normalized.toLowerCase());
+      urls.push(normalized);
+    } catch {
+      // 忽略历史脏数据
+    }
+    if (urls.length >= MAX_PUBLIC_BASE_URLS) break;
+  }
+  return urls;
 }
 
 function nowIso() {
@@ -483,7 +547,13 @@ function createUserSystem({ db, dataDir }) {
     settings.sessionDays = clampInt(settings.sessionDays, 1, 365, 30);
     settings.siteName = String(settings.siteName || 'Nova Studio').slice(0, 80);
     settings.announcement = String(settings.announcement || '').slice(0, 2000);
-    settings.publicBaseUrl = String(settings.publicBaseUrl || '').trim().replace(/\/+$/, '').slice(0, 500);
+    settings.publicBaseUrls = sanitizePublicBaseUrls(stored);
+    if (settings.publicBaseUrls.length === 0 && stored.publicBaseUrl) {
+      settings.publicBaseUrls = sanitizePublicBaseUrls({ publicBaseUrl: stored.publicBaseUrl });
+    }
+    settings.publicBaseUrl = settings.publicBaseUrls[0] || '';
+    settings.auditRetentionDays = clampInt(settings.auditRetentionDays, 0, MAX_RETENTION_DAYS, 180);
+    settings.usageRetentionDays = clampInt(settings.usageRetentionDays, 0, MAX_RETENTION_DAYS, 365);
     return settings;
   }
 
@@ -529,21 +599,26 @@ function createUserSystem({ db, dataDir }) {
     if (patch.allowByok !== undefined) next.allowByok = Boolean(patch.allowByok);
     if (patch.allowUserModelOverride !== undefined) next.allowUserModelOverride = Boolean(patch.allowUserModelOverride);
     if (patch.announcement !== undefined) next.announcement = String(patch.announcement || '').slice(0, 2000);
-    if (patch.publicBaseUrl !== undefined) {
-      const value = String(patch.publicBaseUrl || '').trim().replace(/\/+$/, '');
-      if (value && !/^https?:\/\//i.test(value)) {
-        throw new UserSystemError(400, 'INVALID_PUBLIC_BASE_URL', '公开访问地址必须是 http:// 或 https:// 开头的地址');
-      }
-      next.publicBaseUrl = value.slice(0, 500);
+    if (patch.publicBaseUrls !== undefined || patch.publicBaseUrl !== undefined) {
+      const raw = patch.publicBaseUrls !== undefined ? patch.publicBaseUrls : patch.publicBaseUrl;
+      next.publicBaseUrls = normalizePublicBaseUrls(raw);
+      // 继续维护旧字段，兼容尚未更新的前端/脚本。
+      next.publicBaseUrl = next.publicBaseUrls[0] || '';
     }
     if (patch.sessionDays !== undefined) next.sessionDays = clampInt(patch.sessionDays, 1, 365, current.sessionDays);
+    if (patch.auditRetentionDays !== undefined) {
+      next.auditRetentionDays = clampInt(patch.auditRetentionDays, 0, MAX_RETENTION_DAYS, current.auditRetentionDays);
+    }
+    if (patch.usageRetentionDays !== undefined) {
+      next.usageRetentionDays = clampInt(patch.usageRetentionDays, 0, MAX_RETENTION_DAYS, current.usageRetentionDays);
+    }
     if (patch.defaultUserQuota !== undefined) {
       next.defaultUserQuota = normalizeQuota(patch.defaultUserQuota, current.defaultUserQuota);
     }
     if (patch.modelDefaults !== undefined) {
       next.modelDefaults = normalizeModelDefaults(patch.modelDefaults);
     }
-    for (const key of ['siteName', 'publicBaseUrl', 'registrationEnabled', 'allowByok', 'allowUserModelOverride', 'announcement', 'sessionDays', 'defaultUserQuota', 'modelDefaults']) {
+    for (const key of ['siteName', 'publicBaseUrls', 'publicBaseUrl', 'registrationEnabled', 'allowByok', 'allowUserModelOverride', 'announcement', 'sessionDays', 'auditRetentionDays', 'usageRetentionDays', 'defaultUserQuota', 'modelDefaults']) {
       writeSetting(key, next[key]);
     }
     return next;
@@ -770,6 +845,25 @@ function createUserSystem({ db, dataDir }) {
     } catch (error) {
       console.warn('[user-system] 清理会话失败', error?.message || error);
     }
+  }
+
+  /** 按后台保留天数清理审计与用量记录；0 天表示永久保留。 */
+  function cleanupRetention({ now = Date.now() } = {}) {
+    const settings = readSettings();
+    const result = { audit: 0, usage: 0 };
+    try {
+      if (settings.auditRetentionDays > 0) {
+        const cutoff = new Date(now - settings.auditRetentionDays * 24 * 60 * 60 * 1000).toISOString();
+        result.audit = Number(db.prepare('DELETE FROM audit_logs WHERE created_at < ?').run(cutoff).changes || 0);
+      }
+      if (settings.usageRetentionDays > 0) {
+        const cutoff = new Date(now - settings.usageRetentionDays * 24 * 60 * 60 * 1000).toISOString();
+        result.usage = Number(db.prepare('DELETE FROM usage_events WHERE created_at < ?').run(cutoff).changes || 0);
+      }
+    } catch (error) {
+      console.warn('[user-system] 按保留策略清理失败', error?.message || error);
+    }
+    return result;
   }
 
   // ===== Providers & models =====
@@ -1554,6 +1648,7 @@ function createUserSystem({ db, dataDir }) {
   return {
     initSchema,
     cleanupSessions,
+    cleanupRetention,
     isSetupRequired,
     seedAdminFromEnv,
     setupAdmin,

@@ -3,6 +3,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import Script from "next/script";
 import { ServiceWorkerManager } from "@/components/ServiceWorkerManager";
+import { PwaInstallManager } from "@/components/PwaInstallManager";
 import { BootLoaderCleanup } from "@/components/BootLoaderCleanup";
 import "./globals.css";
 
@@ -16,9 +17,17 @@ export const metadata: Metadata = {
       { url: '/icon-512.png', sizes: '512x512', type: 'image/png' },
     ],
     shortcut: '/favicon.png',
-    apple: '/icon-192.png',
+    apple: '/apple-touch-icon.png',
   },
   manifest: '/manifest.json',
+  appleWebApp: {
+    capable: true,
+    title: 'Nova Studio',
+    statusBarStyle: 'default',
+  },
+  formatDetection: {
+    telephone: false,
+  },
   other: {
     'theme-color': '#1a1a2e',
   },
@@ -81,6 +90,7 @@ export default function RootLayout({
         </div>
         <TooltipProvider>
           <BootLoaderCleanup />
+          <PwaInstallManager />
           <ServiceWorkerManager />
           <ErrorBoundary>
             <main>

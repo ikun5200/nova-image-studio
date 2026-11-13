@@ -51,6 +51,48 @@ const KIND_LABEL = { images: '图片', videos: '视频', audios: '音频' };
 
 const MEDIA_URL_PREFIX = '/api/nova/plugin-media/';
 
+function inferRequestBaseUrl(req) {
+  const headers = req && req.headers ? req.headers : {};
+  const forwardedProto = String(headers['x-forwarded-proto'] || '').split(',')[0].trim();
+  const forwardedHost = String(headers['x-forwarded-host'] || '').split(',')[0].trim();
+  const host = forwardedHost || String(headers.host || '').split(',')[0].trim();
+  if (!host) return '';
+  return `${forwardedProto || 'http'}://${host}`;
+}
+
+/**
+ * 多个公开地址时优先选与当前请求同 Host 的地址（同协议优先），
+ * 这样局域网访问用局域网地址、外网访问用外网地址；都不匹配时用第一个。
+ */
+function pickPublicBaseUrl(configured, req) {
+  const urls = (Array.isArray(configured) ? configured : [configured])
+    .map(value => String(value || '').trim().replace(/\/+$/, ''))
+    .filter(Boolean);
+  const requestBase = inferRequestBaseUrl(req);
+  if (urls.length === 0) return requestBase;
+  if (!requestBase) return urls[0];
+
+  let requestUrl;
+  try {
+    requestUrl = new URL(requestBase);
+  } catch {
+    return urls[0];
+  }
+
+  let hostMatch = '';
+  for (const url of urls) {
+    try {
+      const parsed = new URL(url);
+      if (parsed.host.toLowerCase() !== requestUrl.host.toLowerCase()) continue;
+      if (parsed.protocol === requestUrl.protocol) return url;
+      if (!hostMatch) hostMatch = url;
+    } catch {
+      // 忽略无法解析的配置项
+    }
+  }
+  return hostMatch || urls[0];
+}
+
 /**
  * @param {object} deps 宿主注入的依赖，避免这个模块反过来 require server.js
  */
@@ -60,8 +102,7 @@ function createMediaStore({
   parseIntegerEnv,
   createHttpError,
   getClientIp,
-  normalizeBaseUrl,
-  getConfiguredPublicBaseUrl,
+  getConfiguredPublicBaseUrls,
 }) {
   const MEDIA_DIR = process.env.NOVA_PLUGIN_MEDIA_DIR
     || path.join(__dirname, '..', 'data', 'plugin-media');
@@ -134,24 +175,27 @@ function createMediaStore({
   }
 
   /**
-   * 优先级：管理员后台设置 > 环境变量 > 反代头 / Host 头推断。
+   * 优先级：管理员后台设置（可多个）> 环境变量（可逗号/换行分隔）> 反代头 / Host 头推断。
    * 后台设置是热生效的，上传下一个素材时就会用新地址。
    */
   function resolvePublicBaseUrl(req) {
-    let adminConfigured = '';
+    let adminConfigured;
     try {
-      adminConfigured = getConfiguredPublicBaseUrl ? getConfiguredPublicBaseUrl() : '';
+      adminConfigured = getConfiguredPublicBaseUrls ? getConfiguredPublicBaseUrls() : [];
     } catch {
-      adminConfigured = '';
+      adminConfigured = [];
     }
-    const configured = normalizeBaseUrl(adminConfigured)
-      || normalizeBaseUrl(getRuntimeEnv().NOVA_PUBLIC_BASE_URL);
-    if (configured) return configured;
-    const forwardedProto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
-    const forwardedHost = String(req.headers['x-forwarded-host'] || '').split(',')[0].trim();
-    const host = forwardedHost || String(req.headers.host || '').split(',')[0].trim();
-    if (!host) return '';
-    return `${forwardedProto || 'http'}://${host}`;
+    if (!Array.isArray(adminConfigured)) {
+      adminConfigured = String(adminConfigured || '').split(/[\n,]+/);
+    }
+    const adminUrls = adminConfigured
+      .map(value => String(value || '').trim().replace(/\/+$/, ''))
+      .filter(Boolean);
+    const envUrls = String(getRuntimeEnv().NOVA_PUBLIC_BASE_URL || '')
+      .split(/[\n,]+/)
+      .map(value => value.trim().replace(/\/+$/, ''))
+      .filter(Boolean);
+    return pickPublicBaseUrl(adminUrls.length > 0 ? adminUrls : envUrls, req);
   }
 
   function readBodyToBuffer(req, maxBytes, overLimitMessage) {
@@ -274,7 +318,7 @@ function createMediaStore({
 
     const baseUrl = resolvePublicBaseUrl(req);
     if (!baseUrl) {
-      throw createHttpError(500, 'NO_PUBLIC_BASE_URL', '无法确定素材的公网地址，请配置 NOVA_PUBLIC_BASE_URL');
+      throw createHttpError(500, 'NO_PUBLIC_BASE_URL', '无法确定素材的公网地址，请在后台站点设置中配置公开访问地址，或设置 NOVA_PUBLIC_BASE_URL');
     }
 
     const maxMb = Math.round(rule.maxBytes / 1024 / 1024);
@@ -351,4 +395,4 @@ function createMediaStore({
   };
 }
 
-module.exports = { createMediaStore, MEDIA_EXT_BY_MIME, MEDIA_URL_PREFIX };
+module.exports = { createMediaStore, pickPublicBaseUrl, MEDIA_EXT_BY_MIME, MEDIA_URL_PREFIX };

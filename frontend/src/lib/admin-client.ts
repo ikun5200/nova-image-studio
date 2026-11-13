@@ -341,9 +341,15 @@ export async function fetchAudit(limit = 100, offset = 0): Promise<AuditItem[]> 
 // ===== 设置 =====
 
 export interface AdminSettings extends PublicSettings {
-  /** 视频插件参考素材的公网地址；为空时回退到环境变量 / 请求 Host。 */
-  publicBaseUrl: string;
+  /** 视频插件参考素材的公网地址列表；请求优先匹配同 Host，未命中时使用第一个。 */
+  publicBaseUrls: string[];
+  /** 旧版单地址字段，后端仍会返回，前端不再编辑。 */
+  publicBaseUrl?: string;
   sessionDays: number;
+  /** 操作审计保留天数，0 表示永久保留。 */
+  auditRetentionDays: number;
+  /** 用量记录保留天数，0 表示永久保留。 */
+  usageRetentionDays: number;
   defaultUserQuota: UserQuota;
   modelDefaults: DefaultModels;
 }

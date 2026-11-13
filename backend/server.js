@@ -127,6 +127,7 @@ const HOSTNAME = process.env.HOSTNAME || '0.0.0.0';
 const DB_PATH = process.env.NOVA_TASK_DB || path.join(__dirname, 'nova-tasks.sqlite');
 const TASK_TTL_MS = (Number(process.env.NOVA_TASK_TTL_HOURS) || 12) * 60 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
+const RETENTION_CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 const IMAGE_STREAM_ENABLED = String(process.env.NOVA_IMAGE_STREAM ?? 'true').toLowerCase() !== 'false';
 const IMAGE_STREAM_PARTIAL_IMAGES = Math.min(3, Math.max(0, Number.parseInt(process.env.NOVA_IMAGE_PARTIAL_IMAGES || '1', 10) || 1));
@@ -535,13 +536,12 @@ const pluginMedia = createMediaStore({
   parseIntegerEnv,
   createHttpError,
   getClientIp,
-  normalizeBaseUrl,
   // 管理员后台配置的公开地址优先于环境变量，改完无需重启。
-  getConfiguredPublicBaseUrl: () => {
+  getConfiguredPublicBaseUrls: () => {
     try {
-      return userSystem.getSettings().publicBaseUrl || '';
+      return userSystem.getSettings().publicBaseUrls || [];
     } catch {
-      return '';
+      return [];
     }
   },
 });
@@ -1456,7 +1456,14 @@ async function handleAdminApi(req, res, apiPathname, searchParams, admin) {
       registrationEnabled: next.registrationEnabled,
       allowByok: next.allowByok,
       allowUserModelOverride: next.allowUserModelOverride,
+      publicBaseUrls: next.publicBaseUrls,
+      auditRetentionDays: next.auditRetentionDays,
+      usageRetentionDays: next.usageRetentionDays,
     });
+    const patch = body?.settings || body || {};
+    if (patch.auditRetentionDays !== undefined || patch.usageRetentionDays !== undefined) {
+      runRetentionCleanup();
+    }
     sendJson(res, 200, { settings: next });
     return true;
   }
@@ -4334,17 +4341,30 @@ async function handleApi(req, res, pathname, searchParams) {
   }
 }
 
+function runRetentionCleanup() {
+  try {
+    const removed = userSystem.cleanupRetention();
+    if (removed.audit > 0 || removed.usage > 0) {
+      console.log(`[cleanup] 按保留策略清理: 审计 ${removed.audit} 条, 用量 ${removed.usage} 条`);
+    }
+  } catch (error) {
+    console.warn('[cleanup] 按保留策略清理失败', error?.message || error);
+  }
+}
+
 initDatabase();
 ensureImageDir();
 ensureCdpDir();
 cleanupExpiredTasks();
 pluginMedia.cleanupExpired();
+runRetentionCleanup();
 // 启动时把插件扫一遍：加载成功/失败都会打日志，管理员放错文件时立刻能看到
 pluginRegistry.listPlugins();
 setInterval(cleanupExpiredTasks, CLEANUP_INTERVAL_MS).unref();
 setInterval(() => pluginMedia.cleanupExpired(), CLEANUP_INTERVAL_MS).unref();
 setInterval(cleanupRateLimitBuckets, CLEANUP_INTERVAL_MS).unref();
 setInterval(() => userSystem.cleanupSessions(), CLEANUP_INTERVAL_MS).unref();
+setInterval(runRetentionCleanup, RETENTION_CLEANUP_INTERVAL_MS).unref();
 
 const startServer = () => {
   const wss = setupWebSocketServer();

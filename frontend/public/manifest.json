@@ -3,12 +3,16 @@
     "name": "Nova Studio - AI 视频/图像生成器",
     "short_name": "Nova Studio",
     "description": "Nova Studio AI 视频/图像生成工作台",
+    "lang": "zh-CN",
+    "dir": "ltr",
     "start_url": "/",
+    "scope": "/",
     "display": "standalone",
     "display_override": ["window-controls-overlay", "standalone"],
     "background_color": "#f5f5fa",
     "theme_color": "#1a1a2e",
     "orientation": "any",
+    "prefer_related_applications": false,
     "categories": ["utilities", "productivity", "photo"],
     "icons": [
         {

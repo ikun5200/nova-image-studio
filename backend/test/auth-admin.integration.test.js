@@ -268,6 +268,26 @@ test('多用户鉴权、管理员配置与模型密钥服务端解析', { timeou
   });
   assert.equal(settingsUpdate.response.status, 200, JSON.stringify(settingsUpdate.data));
   assert.equal(settingsUpdate.data.settings.publicBaseUrl, 'http://192.168.31.88:3030');
+  assert.deepEqual(settingsUpdate.data.settings.publicBaseUrls, ['http://192.168.31.88:3030']);
+
+  const multiUrlSettings = await request(baseUrl, '/api/nova/admin/settings', {
+    method: 'PUT',
+    cookie: adminCookie,
+    body: {
+      settings: {
+        publicBaseUrls: ['http://192.168.31.88:3030/', 'https://nova.example.com/'],
+        auditRetentionDays: 30,
+        usageRetentionDays: 90,
+      },
+    },
+  });
+  assert.equal(multiUrlSettings.response.status, 200, JSON.stringify(multiUrlSettings.data));
+  assert.deepEqual(multiUrlSettings.data.settings.publicBaseUrls, [
+    'http://192.168.31.88:3030',
+    'https://nova.example.com',
+  ]);
+  assert.equal(multiUrlSettings.data.settings.auditRetentionDays, 30);
+  assert.equal(multiUrlSettings.data.settings.usageRetentionDays, 90);
 
   const invalidSettings = await request(baseUrl, '/api/nova/admin/settings', {
     method: 'PUT',
@@ -275,6 +295,13 @@ test('多用户鉴权、管理员配置与模型密钥服务端解析', { timeou
     body: { settings: { publicBaseUrl: 'not-a-url' } },
   });
   assert.equal(invalidSettings.response.status, 400);
+
+  const invalidMultiUrl = await request(baseUrl, '/api/nova/admin/settings', {
+    method: 'PUT',
+    cookie: adminCookie,
+    body: { settings: { publicBaseUrls: ['https://ok.example.com', 'ftp://bad.example.com'] } },
+  });
+  assert.equal(invalidMultiUrl.response.status, 400);
 
   // 停用用户后，其会话应立即失效
   await request(baseUrl, `/api/nova/admin/users/${createdUser.data.user.id}`, {

@@ -90,3 +90,6 @@ frontend/public/workbox-*.js
 
 # other
 infinite-canvas-main/
+
+# 本地 logo 候选稿（选定后再复制到 frontend/public）
+/design/logo-candidates/

@@ -28,6 +28,18 @@ const QUOTA_FIELDS: Array<{ key: keyof UserQuota; label: string; hint?: string }
   { key: 'maxParallelCount', label: '单次并发上限', hint: '至少 1' },
 ];
 
+function normalizeSettings(settings: SettingsPayload): SettingsPayload {
+  const publicBaseUrls = Array.isArray(settings.publicBaseUrls) && settings.publicBaseUrls.length > 0
+    ? settings.publicBaseUrls
+    : (settings.publicBaseUrl ? [settings.publicBaseUrl] : []);
+  return {
+    ...settings,
+    publicBaseUrls,
+    auditRetentionDays: Number.isFinite(settings.auditRetentionDays) ? settings.auditRetentionDays : 180,
+    usageRetentionDays: Number.isFinite(settings.usageRetentionDays) ? settings.usageRetentionDays : 365,
+  };
+}
+
 function formatBytes(bytes: number): string {
   if (!bytes) return '0 B';
   const units = ['B', 'KB', 'MB', 'GB'];
@@ -51,7 +63,7 @@ export function AdminSettings() {
     setError(null);
     try {
       const [nextSettings, nextSystem] = await Promise.all([fetchSettings(), fetchSystem()]);
-      setSettings(nextSettings);
+      setSettings(normalizeSettings(nextSettings));
       setSystem(nextSystem);
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载设置失败');
@@ -69,15 +81,17 @@ export function AdminSettings() {
     try {
       const next = await saveSettings({
         siteName: settings.siteName,
-        publicBaseUrl: settings.publicBaseUrl,
+        publicBaseUrls: settings.publicBaseUrls,
         registrationEnabled: settings.registrationEnabled,
         allowByok: settings.allowByok,
         allowUserModelOverride: settings.allowUserModelOverride,
         announcement: settings.announcement,
         sessionDays: settings.sessionDays,
+        auditRetentionDays: settings.auditRetentionDays,
+        usageRetentionDays: settings.usageRetentionDays,
         defaultUserQuota: settings.defaultUserQuota,
       });
-      setSettings(next);
+      setSettings(normalizeSettings(next));
       setSaved(true);
       window.setTimeout(() => setSaved(false), 2000);
     } catch (err) {
@@ -95,7 +109,7 @@ export function AdminSettings() {
     <div className="space-y-6">
       <SectionHeader
         title="站点设置"
-        description="控制注册、密钥模式、新用户默认配额与会话有效期。"
+        description="控制注册、密钥模式、公开地址、数据保留、新用户默认配额与会话有效期。"
         actions={(
           <Button size="sm" onClick={() => void handleSave()} disabled={saving}>
             {saved ? <CheckCircle2 className="size-3.5" /> : <Save className="size-3.5" />}
@@ -127,24 +141,70 @@ export function AdminSettings() {
 
       <Field
         label="公开访问地址"
-        hint="视频插件的参考素材会用这个地址交给上游拉取。局域网可填 http://192.168.31.88:3030，外网填 https://你的域名。留空时回退到 NOVA_PUBLIC_BASE_URL，再回退到请求 Host。"
+        hint="一行一个，最多 10 个。视频插件的参考素材会把与当前请求同 Host 的地址交给上游；都不匹配时使用第一个。留空时回退到 NOVA_PUBLIC_BASE_URL，再回退到请求 Host。"
       >
-        <div className="flex gap-2">
-          <Input
-            value={settings.publicBaseUrl || ''}
-            onChange={event => setSettings(prev => prev ? { ...prev, publicBaseUrl: event.target.value } : prev)}
-            placeholder="http://192.168.31.88:3030"
+        <div className="flex flex-col gap-2">
+          <Textarea
+            value={settings.publicBaseUrls.join('\n')}
+            onChange={event => setSettings(prev => prev ? { ...prev, publicBaseUrls: event.target.value.split('\n') } : prev)}
+            rows={3}
+            placeholder={'http://192.168.31.88:3030\nhttps://nova.example.com'}
           />
-          <Button
-            variant="outline"
-            size="sm"
-            className="shrink-0"
-            onClick={() => setSettings(prev => prev ? { ...prev, publicBaseUrl: window.location.origin } : prev)}
-          >
-            使用当前地址
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="shrink-0"
+              onClick={() => setSettings(prev => {
+                if (!prev) return prev;
+                const origin = window.location.origin.replace(/\/+$/, '');
+                const exists = prev.publicBaseUrls.some(url => url.trim().replace(/\/+$/, '').toLowerCase() === origin.toLowerCase());
+                return exists ? prev : { ...prev, publicBaseUrls: [...prev.publicBaseUrls, origin] };
+              })}
+            >
+              使用当前地址
+            </Button>
+            <span className="text-[11px] text-muted-foreground">列表顺序只是兜底顺序，请求 Host 命中哪一个就用哪一个。</span>
+          </div>
         </div>
       </Field>
+
+      <div className="rounded-xl border border-border bg-card p-4">
+        <div className="flex items-center gap-2">
+          <HardDrive className="size-4 text-muted-foreground" />
+          <p className="text-sm font-medium">数据保留策略</p>
+        </div>
+        <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+          服务器每天自动清理一次，填 0 表示永久保留。任务记录与生成图片的保留时间仍由部署环境变量{' '}
+          <code className="rounded bg-muted px-1 py-0.5 font-mono text-[10px]">NOVA_TASK_TTL_HOURS</code> 控制。
+        </p>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          <Field label="操作审计保留（天）" hint="管理员对用户、模型、设置等关键操作的记录。">
+            <Input
+              type="number"
+              min={0}
+              max={3650}
+              value={settings.auditRetentionDays}
+              onChange={event => setSettings(prev => prev ? {
+                ...prev,
+                auditRetentionDays: Math.max(0, Math.min(3650, Number(event.target.value) || 0)),
+              } : prev)}
+            />
+          </Field>
+          <Field label="用量记录保留（天）" hint="每日/每月生成次数与文本请求统计的原始数据。">
+            <Input
+              type="number"
+              min={0}
+              max={3650}
+              value={settings.usageRetentionDays}
+              onChange={event => setSettings(prev => prev ? {
+                ...prev,
+                usageRetentionDays: Math.max(0, Math.min(3650, Number(event.target.value) || 0)),
+              } : prev)}
+            />
+          </Field>
+        </div>
+      </div>
 
       <Field label="站点公告" hint="留空则不显示。公告会出现在工作台顶部。">
         <Textarea

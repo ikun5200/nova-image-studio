@@ -23,7 +23,7 @@ Nova Studio is an AI video/image generation workbench for individuals and small 
 **What you get:**
 
 - **Two deployment modes**: multi-user server mode (admin-managed models and keys) or local single-user BYOK mode
-- **Admin console**: users/roles/quota, providers and models, defaults, tasks, usage stats, site settings, audit log
+- **Admin console**: users/roles/quota, providers and models, defaults, tasks, usage stats, site settings (multiple public URLs, audit/usage retention), audit log
 - **Key security**: provider API keys are encrypted at rest with AES-256-GCM and never sent to the browser
 - **Per-user isolation**: tasks, images and WebSocket subscriptions are scoped to their owner
 - Image models and text models are configured separately, each with its own protocol, base URL and capability settings
@@ -193,7 +193,7 @@ Nova Studio is built around **user-defined models**:
 
 ### Experience & engineering
 
-- PWA (`next-pwa`), installable to the desktop
+- PWA (`next-pwa`), installable to the desktop; the install entry lives in Settings → About and requires HTTPS (browsers refuse PWA installs on plain-HTTP LAN origins)
 - Adaptive UI across desktop, tablet and mobile
 - Dark / light theme toggle
 - Wide / narrow adaptive layout (vertical tabs on the left, content on the right)
@@ -546,7 +546,7 @@ docker push tianjiangqiji/nova-image-studio:latest
 | `NOVA_MEDIA_MAX_IMAGE_BYTES` | no | `10485760` | Per-file limit for reference images |
 | `NOVA_MEDIA_MAX_VIDEO_BYTES` | no | `52428800` | Per-file limit for reference videos |
 | `NOVA_MEDIA_MAX_AUDIO_BYTES` | no | `15728640` | Per-file limit for reference audio |
-| `NOVA_PUBLIC_BASE_URL` | situational | inferred from proxy headers | This service's public address. Upstreams fetch reference media anonymously, so **an internal-only deployment must set this explicitly** |
+| `NOVA_PUBLIC_BASE_URL` | situational | inferred from proxy headers | This service's public address; multiple values may be comma/newline separated. Upstreams fetch reference media anonymously, so **an internal-only deployment must set this explicitly** |
 | `NOVA_CDP_ENABLED` | no | `false` | Browser CDP master switch; `false` makes `/api/nova/cdp/*` return 404 (restart) |
 | `NOVA_CDP_HOST` | no | `127.0.0.1` | Local Chrome debug host (hot) |
 | `NOVA_CDP_PORT` | no | `9222` | Local Chrome debug port (hot; Agent can change it) |
