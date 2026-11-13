@@ -46,7 +46,7 @@ import {
   type SubmitActions,
 } from '@/lib/workspace-task-service';
 import { cn } from '@/lib/utils';
-import { BA_RANDOM_URL, BING_WALLPAPER_URL } from '@/lib/constants';
+import { BA_RANDOM_URL, buildBingWallpaperUrl } from '@/lib/constants';
 import { getActiveAgentSessionId, setActiveAgentSessionId } from '@/lib/agent-sessions';
 import { setAgentSession } from '@/lib/agent-context-store';
 
@@ -344,7 +344,7 @@ export function WorkspaceShell() {
                           <User className="w-4 h-4" />
                           BA人物
                         </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => headerRef.current?.openRandomImage(BING_WALLPAPER_URL, 'Bing壁纸')}>
+                        <DropdownMenuItem onClick={() => headerRef.current?.openRandomImage(buildBingWallpaperUrl(), 'Bing壁纸')}>
                           <Wallpaper className="w-4 h-4" />
                           Bing壁纸
                         </DropdownMenuItem>

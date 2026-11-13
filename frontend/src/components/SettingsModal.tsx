@@ -50,7 +50,7 @@ import { syncDynamicModelExports } from '@/lib/gemini-config';
 import { exportAllData, importAllData, downloadBlob, generateBackupFilename, type BackupProgress as BackupProgressType } from '@/lib/backup-utils';
 import { checkModelsAvailability, type ModelStatus } from '@/lib/ccode-task-client';
 import { hasAnyApiKey } from '@/lib/settings-storage';
-import { BA_RANDOM_URL, BING_WALLPAPER_URL } from '@/lib/constants';
+import { BA_RANDOM_URL, BING_WALLPAPER_SOURCE_URL } from '@/lib/constants';
 import { PROMPT_DATA_SOURCES, getPromptSourceLabel } from '@/lib/prompt-gallery-data';
 import { isServerMode } from '@/lib/deploy-mode';
 
@@ -568,8 +568,8 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange, initialTab = 'm
                   </li>
                   <li>
                     <span className="text-foreground">随机图片 · Bing壁纸</span> -{' '}
-                    <a href={BING_WALLPAPER_URL} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-primary hover:underline">
-                      bing.img.run <ExternalLink className="w-3 h-3" />
+                    <a href={BING_WALLPAPER_SOURCE_URL} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-primary hover:underline">
+                      bing.biturl.top <ExternalLink className="w-3 h-3" />
                     </a>
                   </li>
                 </ul>

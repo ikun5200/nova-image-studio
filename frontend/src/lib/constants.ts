@@ -8,8 +8,17 @@
 /** BA 随机人物图片 */
 export const BA_RANDOM_URL = 'https://img.catcdn.cn/ba/';
 
-/** Bing 每日壁纸 */
-export const BING_WALLPAPER_URL = 'https://bing.img.run/rand_uhd.php';
+/** Bing 每日壁纸接口；index=0 是今天，1 是昨天，以此类推。 */
+export const BING_WALLPAPER_URL = 'https://bing.biturl.top/?resolution=1920&format=image';
+export const BING_WALLPAPER_INDEX_COUNT = 8;
+/** 关于页展示的数据源主页。 */
+export const BING_WALLPAPER_SOURCE_URL = 'https://bing.biturl.top/';
+
+/** 每次刷新随机取最近 8 天中的一张，并带上时间戳绕过浏览器缓存。 */
+export function buildBingWallpaperUrl(): string {
+  const index = Math.floor(Math.random() * BING_WALLPAPER_INDEX_COUNT);
+  return `${BING_WALLPAPER_URL}&index=${index}&_t=${Date.now()}`;
+}
 
 // ===== 文件大小限制 =====
 

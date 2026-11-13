@@ -16,7 +16,7 @@ import {
 import { runImageAction, type ImageActionPayload } from '@/lib/image-actions';
 import { useOptionalSession } from '@/lib/session-context';
 
-import { BA_RANDOM_URL, BING_WALLPAPER_URL } from '@/lib/constants';
+import { BA_RANDOM_URL, BING_WALLPAPER_URL, buildBingWallpaperUrl } from '@/lib/constants';
 import { useBodyScrollLock } from '@/lib/scroll-lock';
 
 function getDistance(t1: { clientX: number; clientY: number }, t2: { clientX: number; clientY: number }) {
@@ -82,11 +82,15 @@ export const WorkspaceHeader = forwardRef<WorkspaceHeaderRef, WorkspaceHeaderPro
     setImageSrc(url);
   }, [cleanupViewerObjectUrl]);
 
-  /** Refresh current image (same category), append cache-bust param. */
+  /** Refresh current image (same category). Bing keeps a rolling pool of 8 days. */
   const handleRefresh = useCallback(() => {
     if (!imageApiUrl) return;
+    const nextUrl = imageApiUrl.startsWith(BING_WALLPAPER_URL)
+      ? buildBingWallpaperUrl()
+      : `${imageApiUrl}${imageApiUrl.includes('?') ? '&' : '?'}_t=${Date.now()}`;
+    if (nextUrl !== imageApiUrl) setImageApiUrl(nextUrl);
     setImageLoading(true);
-    setImageSrc(`${imageApiUrl}${imageApiUrl.includes('?') ? '&' : '?'}_t=${Date.now()}`);
+    setImageSrc(nextUrl);
   }, [imageApiUrl]);
 
   /** Called when the <img> finishes loading in the viewer. */
@@ -184,7 +188,7 @@ export const WorkspaceHeader = forwardRef<WorkspaceHeaderRef, WorkspaceHeaderPro
                   <User className="w-4 h-4" />
                   BA人物
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => openRandomImage(BING_WALLPAPER_URL, 'Bing壁纸')}>
+                <DropdownMenuItem onClick={() => openRandomImage(buildBingWallpaperUrl(), 'Bing壁纸')}>
                   <Wallpaper className="w-4 h-4" />
                   Bing壁纸
                 </DropdownMenuItem>
