@@ -16,7 +16,7 @@ import {
 import { runImageAction, type ImageActionPayload } from '@/lib/image-actions';
 import { useOptionalSession } from '@/lib/session-context';
 
-import { BA_RANDOM_URL, BING_WALLPAPER_URL, buildBingWallpaperUrl } from '@/lib/constants';
+import { BA_RANDOM_IMAGE_URL, BING_WALLPAPER_URL, buildBaRandomImageUrl, buildBingWallpaperUrl } from '@/lib/constants';
 import { useBodyScrollLock } from '@/lib/scroll-lock';
 
 function getDistance(t1: { clientX: number; clientY: number }, t2: { clientX: number; clientY: number }) {
@@ -87,7 +87,9 @@ export const WorkspaceHeader = forwardRef<WorkspaceHeaderRef, WorkspaceHeaderPro
     if (!imageApiUrl) return;
     const nextUrl = imageApiUrl.startsWith(BING_WALLPAPER_URL)
       ? buildBingWallpaperUrl()
-      : `${imageApiUrl}${imageApiUrl.includes('?') ? '&' : '?'}_t=${Date.now()}`;
+      : imageApiUrl.startsWith(BA_RANDOM_IMAGE_URL)
+        ? buildBaRandomImageUrl()
+        : `${imageApiUrl}${imageApiUrl.includes('?') ? '&' : '?'}_t=${Date.now()}`;
     if (nextUrl !== imageApiUrl) setImageApiUrl(nextUrl);
     setImageLoading(true);
     setImageSrc(nextUrl);
@@ -184,7 +186,7 @@ export const WorkspaceHeader = forwardRef<WorkspaceHeaderRef, WorkspaceHeaderPro
                 <span className="hidden sm:inline">随机图片</span>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" sideOffset={4}>
-                <DropdownMenuItem onClick={() => openRandomImage(BA_RANDOM_URL, 'BA人物')}>
+                <DropdownMenuItem onClick={() => openRandomImage(buildBaRandomImageUrl(), 'BA人物')}>
                   <User className="w-4 h-4" />
                   BA人物
                 </DropdownMenuItem>

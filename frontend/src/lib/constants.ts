@@ -5,11 +5,14 @@
 
 // ===== 外部 URL =====
 
-/** BA 随机人物图片 */
+/** BA 随机人物图片（原始数据源，仅用于关于页外链） */
 export const BA_RANDOM_URL = 'https://img.catcdn.cn/ba/';
 
-/** Bing 每日壁纸接口；index=0 是今天，1 是昨天，以此类推。 */
-export const BING_WALLPAPER_URL = 'https://bing.biturl.top/?resolution=1920&format=image';
+/** 随机图片统一走同源代理，避免 ORB/CORS 导致图片加载或图片操作失败。 */
+export const BA_RANDOM_IMAGE_URL = '/api/nova/random-image?source=ba';
+
+/** Bing 每日壁纸代理接口；index=0 是今天，1 是昨天，以此类推。 */
+export const BING_WALLPAPER_URL = '/api/nova/random-image?source=bing';
 export const BING_WALLPAPER_INDEX_COUNT = 8;
 /** 关于页展示的数据源主页。 */
 export const BING_WALLPAPER_SOURCE_URL = 'https://bing.biturl.top/';
@@ -18,6 +21,10 @@ export const BING_WALLPAPER_SOURCE_URL = 'https://bing.biturl.top/';
 export function buildBingWallpaperUrl(): string {
   const index = Math.floor(Math.random() * BING_WALLPAPER_INDEX_COUNT);
   return `${BING_WALLPAPER_URL}&index=${index}&_t=${Date.now()}`;
+}
+
+export function buildBaRandomImageUrl(): string {
+  return `${BA_RANDOM_IMAGE_URL}&_t=${Date.now()}`;
 }
 
 // ===== 文件大小限制 =====

@@ -46,7 +46,7 @@ import {
   type SubmitActions,
 } from '@/lib/workspace-task-service';
 import { cn } from '@/lib/utils';
-import { BA_RANDOM_URL, buildBingWallpaperUrl } from '@/lib/constants';
+import { buildBaRandomImageUrl, buildBingWallpaperUrl } from '@/lib/constants';
 import { getActiveAgentSessionId, setActiveAgentSessionId } from '@/lib/agent-sessions';
 import { setAgentSession } from '@/lib/agent-context-store';
 
@@ -340,7 +340,7 @@ export function WorkspaceShell() {
                         随机图片
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="start" sideOffset={4}>
-                        <DropdownMenuItem onClick={() => headerRef.current?.openRandomImage(BA_RANDOM_URL, 'BA人物')}>
+                        <DropdownMenuItem onClick={() => headerRef.current?.openRandomImage(buildBaRandomImageUrl(), 'BA人物')}>
                           <User className="w-4 h-4" />
                           BA人物
                         </DropdownMenuItem>

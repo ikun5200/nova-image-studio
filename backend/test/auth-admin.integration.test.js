@@ -303,6 +303,14 @@ test('多用户鉴权、管理员配置与模型密钥服务端解析', { timeou
   });
   assert.equal(invalidMultiUrl.response.status, 400);
 
+  // 随机图片代理只接受固定来源；未登录必须被拦截
+  const invalidRandomSource = await request(baseUrl, '/api/nova/random-image?source=evil', {
+    cookie: adminCookie,
+  });
+  assert.equal(invalidRandomSource.response.status, 400);
+  const randomImageWithoutAuth = await request(baseUrl, '/api/nova/random-image?source=bing');
+  assert.equal(randomImageWithoutAuth.response.status, 401);
+
   // 停用用户后，其会话应立即失效
   await request(baseUrl, `/api/nova/admin/users/${createdUser.data.user.id}`, {
     method: 'PATCH',

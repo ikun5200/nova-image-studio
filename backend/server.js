@@ -3448,6 +3448,89 @@ function ackTask(res, taskId) {
   sendJson(res, 200, { ok: true });
 }
 
+const RANDOM_IMAGE_MAX_BYTES = 20 * 1024 * 1024;
+const RANDOM_IMAGE_SOURCES = {
+  bing: (index) => `https://bing.biturl.top/?resolution=1920&format=image&index=${index}`,
+  ba: () => 'https://img.catcdn.cn/ba/',
+};
+
+/**
+ * 随机图片统一走同源代理：
+ * - 浏览器里 <img> 不受 CORS/ORB 影响，BA 的 302 也能正常显示
+ * - 下载 / 复制 / 加素材 / 作参考都能 fetch 到同源字节
+ * 只允许固定上游，避免变成任意 URL 代理。
+ */
+async function handleRandomImageProxy(req, res, searchParams) {
+  const source = String(searchParams.get('source') || 'bing');
+  const buildUpstream = RANDOM_IMAGE_SOURCES[source];
+  if (!buildUpstream) {
+    sendJson(res, 400, { error: '不支持的随机图片来源', code: 'INVALID_RANDOM_IMAGE_SOURCE' });
+    return;
+  }
+
+  const rawIndex = Number.parseInt(String(searchParams.get('index') || ''), 10);
+  const index = Number.isInteger(rawIndex) && rawIndex >= 0 && rawIndex <= 7
+    ? rawIndex
+    : Math.floor(Math.random() * 8);
+
+  let upstream;
+  try {
+    upstream = await fetch(buildUpstream(index), {
+      redirect: 'follow',
+      signal: AbortSignal.timeout(15000),
+      headers: {
+        'user-agent': 'Mozilla/5.0 (compatible; NovaStudio/1.0)',
+        accept: 'image/*',
+      },
+    });
+  } catch (error) {
+    const timedOut = error && error.name === 'TimeoutError';
+    sendJson(res, timedOut ? 504 : 502, {
+      error: timedOut ? '随机图片加载超时，请重试' : '随机图片加载失败，请重试',
+      code: 'RANDOM_IMAGE_UPSTREAM_FAILED',
+    });
+    return;
+  }
+
+  if (!upstream.ok) {
+    sendJson(res, 502, { error: `随机图片上游返回 ${upstream.status}`, code: 'RANDOM_IMAGE_UPSTREAM_FAILED' });
+    return;
+  }
+
+  const declaredBytes = Number(upstream.headers.get('content-length') || 0);
+  if (declaredBytes > RANDOM_IMAGE_MAX_BYTES) {
+    sendJson(res, 502, { error: '随机图片体积过大', code: 'RANDOM_IMAGE_TOO_LARGE' });
+    return;
+  }
+
+  let buffer;
+  try {
+    buffer = Buffer.from(await upstream.arrayBuffer());
+  } catch {
+    sendJson(res, 502, { error: '随机图片读取失败，请重试', code: 'RANDOM_IMAGE_UPSTREAM_FAILED' });
+    return;
+  }
+  if (buffer.length === 0 || buffer.length > RANDOM_IMAGE_MAX_BYTES) {
+    sendJson(res, 502, { error: '随机图片内容无效', code: 'RANDOM_IMAGE_UPSTREAM_FAILED' });
+    return;
+  }
+
+  const declaredMime = String(upstream.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+  const actualMime = declaredMime.startsWith('image/') ? declaredMime : detectImageMime(buffer, '');
+  if (!actualMime || !actualMime.startsWith('image/')) {
+    sendJson(res, 502, { error: '随机图片上游返回的不是图片', code: 'RANDOM_IMAGE_UPSTREAM_FAILED' });
+    return;
+  }
+
+  res.writeHead(200, {
+    'Content-Type': actualMime,
+    'Content-Length': buffer.length,
+    'Cache-Control': 'private, no-store, max-age=0',
+    'X-Content-Type-Options': 'nosniff',
+  });
+  res.end(buffer);
+}
+
 async function handleApi(req, res, pathname, searchParams) {
   try {
     const apiPathname = pathname.replace(/\/+$/, '');
@@ -3478,6 +3561,11 @@ async function handleApi(req, res, pathname, searchParams) {
         }
         return await handleAdminApi(req, res, apiPathname, searchParams, currentUser);
       }
+    }
+
+    if (req.method === 'GET' && apiPathname === '/api/nova/random-image') {
+      await handleRandomImageProxy(req, res, searchParams);
+      return true;
     }
 
     if (req.method === 'GET' && apiPathname === '/api/nova/queue-status') {

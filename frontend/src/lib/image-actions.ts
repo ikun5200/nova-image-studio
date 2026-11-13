@@ -329,6 +329,13 @@ export async function runImageAction(
       return;
     }
     if (action === 'copy') {
+      // 局域网 HTTP 不是安全上下文，浏览器不提供 Clipboard API；此时退化为下载，
+      // 避免按钮看起来完全不可用。
+      if (!navigator.clipboard || typeof ClipboardItem === 'undefined') {
+        await downloadImagePayload(payload);
+        dispatchImageActionToast('当前 HTTP 环境不支持复制图片，已改为下载', 'info');
+        return;
+      }
       await copyImagePayload(payload);
       dispatchImageActionToast('图片已复制', 'success');
       return;
